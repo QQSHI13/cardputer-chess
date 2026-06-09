@@ -113,6 +113,22 @@ static void moveToSAN(char* buf, uint8_t bufLen, const Move& move,
 
 ChessScene::ChessScene() : Scene("chess") {}
 
+ChessScene::~ChessScene() {
+    cleanupAITask();
+}
+
+void ChessScene::cleanupAITask() {
+    if (m_aiTaskHandle != nullptr) {
+        vTaskDelete(static_cast<TaskHandle_t>(m_aiTaskHandle));
+        m_aiTaskHandle = nullptr;
+    }
+    if (m_aiSemaphore != nullptr) {
+        vSemaphoreDelete(static_cast<SemaphoreHandle_t>(m_aiSemaphore));
+        m_aiSemaphore = nullptr;
+    }
+    m_aiThinking = false;
+}
+
 void ChessScene::setup() {
     // ── Status Bar ────────────────────────────────────────────────
     m_statusBar.setBounds({0, 0, SCREEN_W, 12});
@@ -256,11 +272,17 @@ void ChessScene::onTick(uint32_t dt_ms) {
             // Copy board and spawn AI task on Core 0
             m_aiBoardCopy = m_board;
             xTaskCreatePinnedToCore(aiTaskEntry, "chess_ai", 32768,
-                                    this, 1, nullptr, 0);
+                                    this, 1,
+                                    reinterpret_cast<TaskHandle_t*>(&m_aiTaskHandle), 0);
         } else {
             // Poll for task completion
             if (xSemaphoreTake(static_cast<SemaphoreHandle_t>(m_aiSemaphore), 0) == pdTRUE) {
                 m_aiThinking = false;
+                // Delete the suspended AI task and clear its handle
+                if (m_aiTaskHandle != nullptr) {
+                    vTaskDelete(static_cast<TaskHandle_t>(m_aiTaskHandle));
+                    m_aiTaskHandle = nullptr;
+                }
                 Move aiMove = m_aiResultMove;
                 MoveList legal;
                 ChessRules::generateLegal(m_board, legal);
@@ -447,6 +469,10 @@ bool ChessScene::onInput(const InputEvent& event) {
 // ── Game Logic ────────────────────────────────────────────────────
 
 void ChessScene::newGame() {
+    // Kill any in-flight AI task and reset semaphore so the next game
+    // doesn't accidentally consume a stale signal or apply an old move.
+    cleanupAITask();
+
     // Clear puzzle state (in case we're coming from puzzle mode)
     m_puzzleMode = false;
     m_puzzleAutoPlayPending = false;
@@ -1318,6 +1344,10 @@ bool ChessScene::loadSavedGame() {
     }
 
     m_boardGrid.markDirty();
+
+    // If the saved game was already over, show the game-over state
+    checkGameEnd();
+
     return true;
 }
 
@@ -1554,7 +1584,7 @@ void ChessScene::aiTaskEntry(void* param) {
     }
     self->m_aiResultMove = move;
     xSemaphoreGive(static_cast<SemaphoreHandle_t>(self->m_aiSemaphore));
-    vTaskDelete(nullptr);
+    vTaskSuspend(nullptr);
 }
 
 // ── Network Mode ─────────────────────────────────────────────────────

@@ -26,6 +26,7 @@ using namespace CardGFX;
 class ChessScene : public Scene {
 public:
     ChessScene();
+    ~ChessScene();
     void setup();
 
     // Scene lifecycle
@@ -116,7 +117,9 @@ private:
     ChessBoard   m_aiBoardCopy;
     Move         m_aiResultMove;
     void*        m_aiSemaphore = nullptr;
+    void*        m_aiTaskHandle = nullptr;
     static void  aiTaskEntry(void* param);
+    void         cleanupAITask();
 
     // ── Network Mode ────────────────────────────────────────────
     enum class NetworkMode : uint8_t { Local, Online };
