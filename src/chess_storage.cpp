@@ -1,10 +1,10 @@
 #include "chess_storage.h"
-#include <Preferences.h>
+#include <SD.h>
 #include <cstring>
 
 // ─── Binary Save Format ──────────────────────────────────────────────
 //
-// Version 4 layout (removed atomic explosion data from v3):
+// Version 4 layout (unchanged — only storage medium switched from NVS to SD):
 //   [0]       version (0x04)
 //   [1..64]   board squares — 1 byte each: (type << 4) | (color << 0)
 //   [65]      sideToMove
@@ -56,8 +56,8 @@ static constexpr size_t RECORD_SIZE_V3 = 33;
 static constexpr size_t HEADER_SIZE = 91;
 static constexpr size_t RECORD_SIZE = 16;
 
-static constexpr const char* NVS_NAMESPACE = "chess";
-static constexpr const char* NVS_KEY = "game";
+static constexpr const char* SAVE_DIR  = "/chess";
+static constexpr const char* SAVE_PATH = "/chess/save.dat";
 
 namespace ChessStorage {
 
@@ -96,7 +96,6 @@ static void unpackRecord(const uint8_t* src, MoveRecord& rec) {
                            static_cast<PieceColor>(src[15]));
 }
 
-// V1 unpacker for backward compatibility
 static void unpackRecordV1(const uint8_t* src, MoveRecord& rec) {
     rec.move.from = makeSquare(src[0], src[1]);
     rec.move.to = makeSquare(src[2], src[3]);
@@ -133,6 +132,13 @@ static inline uint32_t readU32LE(const uint8_t* src) {
            ((uint32_t)src[2] << 16) | ((uint32_t)src[3] << 24);
 }
 
+static bool ensureDir() {
+    if (!SD.exists(SAVE_DIR)) {
+        return SD.mkdir(SAVE_DIR);
+    }
+    return true;
+}
+
 void saveGame(const ChessBoard& board,
               const MoveRecord* history, uint8_t historyCount,
               bool historyOverflow,
@@ -144,14 +150,11 @@ void saveGame(const ChessBoard& board,
 
     size_t totalSize = HEADER_SIZE + (size_t)historyCount * RECORD_SIZE;
 
-    // Use stack buffer for small saves, heap for large ones
     uint8_t stackBuf[512];
     uint8_t* buf = (totalSize <= sizeof(stackBuf)) ? stackBuf : new uint8_t[totalSize];
 
-    // Header
     buf[0] = SAVE_VERSION;
 
-    // Board squares
     for (uint8_t r = 0; r < 8; r++) {
         for (uint8_t c = 0; c < 8; c++) {
             Piece p = board.at(c, r);
@@ -179,16 +182,16 @@ void saveGame(const ChessBoard& board,
     writeU32LE(buf + 86, timeBlackMs);
     buf[90] = timerRunning ? 1 : 0;
 
-    // History records
     for (uint8_t i = 0; i < historyCount; i++) {
         packRecord(buf + HEADER_SIZE + (size_t)i * RECORD_SIZE, history[i]);
     }
 
-    // Write to NVS
-    Preferences prefs;
-    prefs.begin(NVS_NAMESPACE, false);
-    prefs.putBytes(NVS_KEY, buf, totalSize);
-    prefs.end();
+    ensureDir();
+    File f = SD.open(SAVE_PATH, FILE_WRITE);
+    if (f) {
+        f.write(buf, totalSize);
+        f.close();
+    }
 
     if (buf != stackBuf) delete[] buf;
 }
@@ -202,20 +205,20 @@ bool loadGame(ChessBoard& board,
               TimeControl& timeControl, uint32_t& timeWhiteMs,
               uint32_t& timeBlackMs, bool& timerRunning) {
 
-    Preferences prefs;
-    prefs.begin(NVS_NAMESPACE, true); // read-only
-    size_t len = prefs.getBytesLength(NVS_KEY);
+    if (!SD.exists(SAVE_PATH)) return false;
 
-    // Need at least the v1 header to proceed
+    File f = SD.open(SAVE_PATH, FILE_READ);
+    if (!f) return false;
+
+    size_t len = f.size();
     if (len < HEADER_SIZE_V1) {
-        prefs.end();
+        f.close();
         return false;
     }
 
-    // Allocate buffer large enough
     uint8_t* buf = new uint8_t[len];
-    prefs.getBytes(NVS_KEY, buf, len);
-    prefs.end();
+    f.read(buf, len);
+    f.close();
 
     uint8_t version = buf[0];
     if (version != SAVE_VERSION_V1 && version != SAVE_VERSION_V2 &&
@@ -224,8 +227,7 @@ bool loadGame(ChessBoard& board,
         return false;
     }
 
-    // Board squares
-    board.reset(); // Start clean, then overwrite
+    board.reset();
     for (uint8_t r = 0; r < 8; r++) {
         for (uint8_t c = 0; c < 8; c++) {
             uint8_t packed = buf[1 + r * 8 + c];
@@ -242,25 +244,20 @@ bool loadGame(ChessBoard& board,
     board.setFullmoveNumber(readU16LE(buf + 70));
 
     historyCount = buf[72];
-    if (historyCount > 250) historyCount = 250; // Clamp to MAX_HISTORY
+    if (historyCount > 250) historyCount = 250;
     historyOverflow = (buf[73] & 0x01) != 0;
     aiDifficulty = static_cast<AIDifficulty>(buf[74]);
     aiColor = static_cast<PieceColor>(buf[75]);
     localColor = static_cast<PieceColor>(buf[76]);
     boardFlipped = buf[77] != 0;
 
-    // Variant (v2+)
     if (version >= SAVE_VERSION_V2) {
         uint8_t rawVariant = buf[78];
-        // Reject saves from removed variants (Atomic was 1 in old enum)
-        // In v1-v3, Chess960 was 2; in v4+, Chess960 is 1
         if (version < SAVE_VERSION_V4 && rawVariant == 1) {
-            // Old Atomic save — cannot load
             delete[] buf;
             return false;
         }
         if (version < SAVE_VERSION_V4 && rawVariant == 2) {
-            // Old Chess960 (was enum value 2, now 1)
             variant = ChessVariant::Chess960;
         } else {
             variant = static_cast<ChessVariant>(rawVariant);
@@ -269,7 +266,6 @@ bool loadGame(ChessBoard& board,
         variant = ChessVariant::Standard;
     }
 
-    // Position index and timer (v3+)
     if (version >= SAVE_VERSION_V3 && len >= HEADER_SIZE) {
         positionIndex = readU16LE(buf + 79);
         timeControl = static_cast<TimeControl>(buf[81]);
@@ -284,7 +280,6 @@ bool loadGame(ChessBoard& board,
         timerRunning = false;
     }
 
-    // Determine record layout based on version
     size_t headerSize, recordSize;
     if (version >= SAVE_VERSION_V4) {
         headerSize = HEADER_SIZE;
@@ -300,13 +295,11 @@ bool loadGame(ChessBoard& board,
         recordSize = RECORD_SIZE_V1;
     }
 
-    // Validate history fits in buffer
     size_t expectedSize = headerSize + (size_t)historyCount * recordSize;
     if (len < expectedSize) {
         historyCount = 0;
     }
 
-    // Unpack history records
     for (uint8_t i = 0; i < historyCount; i++) {
         if (version >= SAVE_VERSION_V2) {
             unpackRecord(buf + headerSize + (size_t)i * recordSize, history[i]);
@@ -320,18 +313,13 @@ bool loadGame(ChessBoard& board,
 }
 
 bool hasSave() {
-    Preferences prefs;
-    prefs.begin(NVS_NAMESPACE, true);
-    size_t len = prefs.getBytesLength(NVS_KEY);
-    prefs.end();
-    return len >= HEADER_SIZE_V1; // Accept v1, v2, and v3
+    return SD.exists(SAVE_PATH);
 }
 
 void clearSave() {
-    Preferences prefs;
-    prefs.begin(NVS_NAMESPACE, false);
-    prefs.remove(NVS_KEY);
-    prefs.end();
+    if (SD.exists(SAVE_PATH)) {
+        SD.remove(SAVE_PATH);
+    }
 }
 
 } // namespace ChessStorage

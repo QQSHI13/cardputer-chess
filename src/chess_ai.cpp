@@ -268,10 +268,11 @@ Move ChessAI::findBestMove(ChessBoard& board, AIDifficulty difficulty) {
     uint32_t maxTimeMs;
 
     switch (difficulty) {
-    case AIDifficulty::Easy:   maxDepth = 2; maxTimeMs = 200;  break;
-    case AIDifficulty::Medium: maxDepth = 4; maxTimeMs = 1000; break;
-    case AIDifficulty::Hard:   maxDepth = 6; maxTimeMs = 3000; break;
-    default:                   maxDepth = 3; maxTimeMs = 500;  break;
+    case AIDifficulty::Beginner: maxDepth = 1; maxTimeMs = 150; break;
+    case AIDifficulty::Easy:     maxDepth = 2; maxTimeMs = 300; break;
+    case AIDifficulty::Medium:   maxDepth = 4; maxTimeMs = 1000; break;
+    case AIDifficulty::Hard:     maxDepth = 6; maxTimeMs = 3000; break;
+    default:                     maxDepth = 3; maxTimeMs = 500;  break;
     }
 
     s_searchDeadline = millis() + maxTimeMs;
@@ -322,9 +323,16 @@ Move ChessAI::findBestMove(ChessBoard& board, AIDifficulty difficulty) {
         }
     }
 
-    // Easy mode: 30% chance to pick a random legal move instead of the best
-    if (difficulty == AIDifficulty::Easy && moves.count > 1) {
-        if ((esp_random() % 100) < 30) {
+    // Beginner: 50% chance to pick a random legal move
+    if (difficulty == AIDifficulty::Beginner && moves.count > 1) {
+        if ((esp_random() % 100) < 50) {
+            uint8_t idx = esp_random() % moves.count;
+            bestMove = moves.moves[idx];
+        }
+    }
+    // Easy mode: 40% chance to pick a random legal move instead of the best
+    else if (difficulty == AIDifficulty::Easy && moves.count > 1) {
+        if ((esp_random() % 100) < 40) {
             uint8_t idx = esp_random() % moves.count;
             bestMove = moves.moves[idx];
         }

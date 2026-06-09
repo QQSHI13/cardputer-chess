@@ -112,6 +112,12 @@ private:
     PieceColor   m_aiColor = PieceColor::Black;
     bool         m_aiThinking = false;
 
+    // AI runs on Core 0 via FreeRTOS so UI stays responsive on Hard
+    ChessBoard   m_aiBoardCopy;
+    Move         m_aiResultMove;
+    void*        m_aiSemaphore = nullptr;
+    static void  aiTaskEntry(void* param);
+
     // ── Network Mode ────────────────────────────────────────────
     enum class NetworkMode : uint8_t { Local, Online };
     NetworkMode m_netMode = NetworkMode::Local;
@@ -149,6 +155,7 @@ private:
     void updateBoardHighlights();
     void addMoveToList(const char* san);
     void checkGameEnd();
+    bool isThreefoldRepetition();
     void showPromotionModal(const Move& baseMove);
     void showGameOverModal(const char* title, const char* message);
     void rebuildMoveList();

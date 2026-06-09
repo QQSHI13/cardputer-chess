@@ -141,8 +141,9 @@ static const SimplePuzzle SIMPLE_PUZZLES[] = {
      0, PuzzleType::Tactic, 60, 1, {{6,4, 5,5}}},
 
     // 17: Knight fork. Ne4-f6+ forks Kg8 and Qd5.
-    // W: Kg1(6,0) Ne4(4,3). B: Kg8(6,7) Qd5(3,4) Rf8(5,7) ph7(7,6).
-    {"......K." "........" "........" "....N..." "...q...." "........" ".......p" ".....rk.",
+    // W: Kg1(6,0) Ne4(4,3). B: Kg8(6,7) Qd5(3,4) Re8(4,7) ph7(7,6).
+    // Rook moved from f8 to e8 so it cannot capture on f6.
+    {"......K." "........" "........" "....N..." "...q...." "........" ".......p" "....r.k.",
      0, PuzzleType::Tactic, 55, 1, {{4,3, 5,5}}},
 };
 

@@ -3,9 +3,13 @@
 #include "chess_sprites.h"
 #include "esp_now_transport.h"
 #include "puzzle_data.h"
+#include "chess_zobrist.h"
 #include <Arduino.h>
 #include <cstdio>
 #include <cstring>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 
 // ── SAN Formatting ───────────────────────────────────────────────────
 // Must be called BEFORE the move is executed on the board.
@@ -160,6 +164,11 @@ void ChessScene::setup() {
 
     // Start a new game
     newGame();
+
+    // AI task semaphore
+    if (!m_aiSemaphore) {
+        m_aiSemaphore = xSemaphoreCreateBinary();
+    }
 }
 
 void ChessScene::onEnter() {
@@ -235,36 +244,33 @@ void ChessScene::onTick(uint32_t dt_ms) {
         }
     }
 
-    // AI turn: two-phase approach so "Thinking..." renders before search blocks.
-    // Phase 1: set thinking flag → status bar updates → frame renders.
-    // Phase 2 (next tick): run search → execute move.
-    // Skip while move animation is playing.
+    // AI turn: run search on Core 0 via FreeRTOS so UI stays responsive.
     if (m_aiDifficulty != AIDifficulty::None &&
         !m_moveAnim.active &&
         m_uiState == UIState::SelectPiece &&
         m_board.sideToMove() == m_aiColor) {
 
         if (!m_aiThinking) {
-            // Phase 1: mark thinking, let the frame render "Thinking..."
             m_aiThinking = true;
             updateStatusBar();
+            // Copy board and spawn AI task on Core 0
+            m_aiBoardCopy = m_board;
+            xTaskCreatePinnedToCore(aiTaskEntry, "chess_ai", 32768,
+                                    this, 1, nullptr, 0);
         } else {
-            // Phase 2: run the search
-            Move aiMove = ChessAI::findBestMove(m_board, m_aiDifficulty);
-            m_aiThinking = false;
-
-            // Validate move before executing (defense-in-depth)
-            MoveList legal;
-            ChessRules::generateLegal(m_board, legal);
-            if (!legal.contains(aiMove)) {
-                // Should never happen — fall back to first legal move
-                if (legal.count > 0) {
+            // Poll for task completion
+            if (xSemaphoreTake(static_cast<SemaphoreHandle_t>(m_aiSemaphore), 0) == pdTRUE) {
+                m_aiThinking = false;
+                Move aiMove = m_aiResultMove;
+                MoveList legal;
+                ChessRules::generateLegal(m_board, legal);
+                if (!legal.contains(aiMove) && legal.count > 0) {
                     aiMove = legal.moves[0];
-                } else {
-                    return; // No legal moves — game should have ended
+                }
+                if (legal.count > 0) {
+                    executeMove(aiMove);
                 }
             }
-            executeMove(aiMove);
         }
     }
 
@@ -286,11 +292,11 @@ bool ChessScene::onInput(const InputEvent& event) {
             exitReviewMode();
             return true;
         }
-        if (event.key == ',' || event.key == '<') {
+        if (event.key == ',' || event.key == '<' || event.key == Key::LEFT || event.key == Key::UP) {
             if (m_reviewIndex > 0) reviewGoTo(m_reviewIndex - 1);
             return true;
         }
-        if (event.key == '.' || event.key == '>') {
+        if (event.key == '.' || event.key == '>' || event.key == Key::RIGHT || event.key == Key::DOWN) {
             if (m_reviewIndex < m_historyCount) reviewGoTo(m_reviewIndex + 1);
             return true;
         }
@@ -905,7 +911,27 @@ void ChessScene::checkGameEnd() {
     } else if (ChessRules::isInsufficientMaterial(m_board)) {
         m_statusBar.setRight("Draw");
         showGameOverModal("Insufficient", "Material for mate.");
+    } else if (isThreefoldRepetition()) {
+        m_statusBar.setRight("Draw");
+        showGameOverModal("Repetition", "Game is a draw.");
     }
+}
+
+bool ChessScene::isThreefoldRepetition() {
+    uint32_t currentHash = ChessZobrist::hash(m_board);
+    ChessBoard temp;
+    temp.setVariant(m_variant);
+    temp.setPositionIndex(m_positionIndex);
+    temp.reset();
+    uint8_t count = (ChessZobrist::hash(temp) == currentHash) ? 1 : 0;
+    for (uint8_t i = 0; i < m_historyCount; i++) {
+        temp.makeMove(m_history[i].move);
+        if (ChessZobrist::hash(temp) == currentHash) {
+            count++;
+            if (count >= 3) return true;
+        }
+    }
+    return false;
 }
 
 void ChessScene::showPromotionModal(const Move& baseMove) {
@@ -1514,6 +1540,21 @@ void ChessScene::clearAIMode() {
     m_aiThinking = false;
     m_boardFlipped = false;
     newGame();
+}
+
+// ── AI Task (runs on Core 0) ─────────────────────────────────────────
+
+void ChessScene::aiTaskEntry(void* param) {
+    ChessScene* self = static_cast<ChessScene*>(param);
+    Move move = ChessAI::findBestMove(self->m_aiBoardCopy, self->m_aiDifficulty);
+    MoveList legal;
+    ChessRules::generateLegal(self->m_aiBoardCopy, legal);
+    if (!legal.contains(move) && legal.count > 0) {
+        move = legal.moves[0];
+    }
+    self->m_aiResultMove = move;
+    xSemaphoreGive(static_cast<SemaphoreHandle_t>(self->m_aiSemaphore));
+    vTaskDelete(nullptr);
 }
 
 // ── Network Mode ─────────────────────────────────────────────────────
