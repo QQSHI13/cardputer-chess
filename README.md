@@ -1,6 +1,8 @@
 # Cardputer ADV Chess
 
-A chess game for the M5Stack Cardputer Advance featuring local pass-and-play, AI opponent, wireless multiplayer via ESP-NOW, Chess960, timed games, and puzzles. Built with the [CardGFX](lib/cardgfx/README.md) UI framework.
+A chess game for the M5Stack Cardputer Advance (Stamp-S3A / ESP32-S3), based on the original [cardputer-chess](https://github.com/kaini-industries/cardputer-chess) by kaini-industries. All original features are preserved: local pass-and-play, AI opponent, wireless multiplayer via ESP-NOW, Chess960, timed games, and puzzles. Built with the [CardGFX](lib/cardgfx/README.md) UI framework.
+
+> This repo tracks ADV-specific build fixes and future power/SD-card experiments.
 
 ![Cardputer ADV Chess](img/chess.jpeg)
 
@@ -178,7 +180,7 @@ pio run --target upload
 pio device monitor
 ```
 
-The build automatically generates a merged M5Burner-compatible binary at `firmware/cardputer-chess-<version>.bin`.
+The build automatically generates a merged M5Burner-compatible binary at `firmware/cardputer-chess-adv-<version>.bin`.
 
 ## Project Structure
 
@@ -216,7 +218,7 @@ The build automatically generates a merged M5Burner-compatible binary at `firmwa
 | Library | Version | Purpose |
 |---------|---------|---------|
 | [M5Unified](https://github.com/m5stack/M5Unified) | ^0.2.10 | Unified hardware abstraction |
-| [M5Cardputer](https://github.com/m5stack/M5Cardputer) | ^1.1.1 | Cardputer keyboard and hardware |
+| [M5Cardputer](https://github.com/m5stack/M5Cardputer) | `main` (GitHub) | Cardputer keyboard and hardware (ADV/TCA8418 support) |
 | [M5GFX](https://github.com/m5stack/M5GFX) | ^0.2.16 | Graphics library |
 
 ## License
