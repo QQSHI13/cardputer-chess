@@ -38,6 +38,7 @@ On launch, a lobby screen presents the available options. If a saved game exists
 | **Host** | Broadcast a game over ESP-NOW and wait for an opponent to join. Choose variant and time control before hosting. Host plays White. |
 | **Join** | Scan for nearby hosts. A list shows discovered hosts with their variant and time control. Select a host to connect. Joiner plays Black. |
 | **Puzzles** | Solve chess puzzles organized by category (mate-in-1, mate-in-2, tactics). Progress is saved across sessions. |
+| **Settings** | Adjust display, input, gameplay, and wireless preferences (see [Settings](#settings)). Persisted across power cycles. |
 
 Starting a new game (Local, vs AI, Host, or Join) clears any existing save. Network games are not saved since the connection cannot survive a power cycle.
 
@@ -99,6 +100,60 @@ In multi-move puzzles (mate-in-2, tactics), the opponent's response is auto-play
 | **H** | Hint — first press highlights the source square, second press adds the destination |
 | **S** | Skip to next puzzle |
 | **Esc** | Deselect piece (if selected) or exit to lobby |
+
+## Settings
+
+The **Settings** entry in the lobby exposes user-tunable preferences. Settings are persisted in NVS and survive power cycles; a CRC guards against corruption (a bad blob falls back to defaults). Brightness, theme, and key-repeat take effect immediately; the rest apply on the next game start.
+
+### Display
+
+| Setting | Options | Notes |
+|---------|---------|-------|
+| **Brightness** | Off / 16 / 32 / … / 255 | Backlight level. |
+| **Theme** | Dark / Light / High Contrast | CardGFX theme. |
+| **Pieces** | Sprites / Letters | Default render mode (press **T** to toggle per-session). |
+| **Board** | Themed / Black & White | Default square colors (press **B** to toggle per-session). |
+| **Animation** | Off / Normal / Fast | Sliding-piece animation duration. |
+| **Coordinates** | On / Off | File/rank labels on the board edge. |
+| **Legal dots** | On / Off | Dot marker on empty legal-move squares. |
+| **Last-move mark** | On / Off | Highlight the from/to squares of the last move. |
+
+### Input
+
+| Setting | Options | Notes |
+|---------|---------|-------|
+| **Cursor wrap** | Off / On | Board cursor wraps at edges instead of clamping. |
+| **Key repeat** | Slow / Normal / Fast | Auto-repeat delay/rate for held keys. |
+
+### Gameplay
+
+| Setting | Options | Notes |
+|---------|---------|-------|
+| **Auto-flip** | On / Off | Flip the board between turns in local pass-and-play. |
+| **Auto-save** | On / Off | Persist the game to NVS after each move (disable to reduce flash wear). |
+| **AI opening book** | On / Off | Whether the AI consults its opening book (standard variant only). |
+| **Default variant** | Standard / Chess960 | Pre-selected in the lobby's variant menu. |
+| **Default time** | No Timer / 1+0 / 3+2 / 5+3 / 10+0 | Pre-selected in the lobby's time menu. |
+
+### Wireless
+
+| Setting | Options | Notes |
+|---------|---------|-------|
+| **ESP-NOW channel** | 1 – 11 | WiFi channel for peer-to-peer pairing. **Both devices must use the same channel.** Change this if your 2.4 GHz environment is noisy. |
+| **Pairing timeout** | 30s / 60s / 120s | How long host/join will wait before giving up. |
+| **Disconnect timeout** | 2s / 3s / 5s | Online connection-loss threshold. |
+
+### Data
+
+| Action | Effect |
+|--------|--------|
+| **Clear saved game** | Erases any auto-saved game. |
+| **Reset puzzles** | Clears all puzzle progress. |
+| **Factory reset** | Restores default settings, clears the saved game, and resets puzzle progress. |
+
+### About
+
+Shows the firmware version, the device's MAC address (useful for wireless debugging), and free heap.
 
 ## Wireless Multiplayer
 
@@ -189,6 +244,8 @@ The build automatically generates a merged M5Burner-compatible binary at `firmwa
 ├── src/
 │   ├── main.cpp                # Entry point
 │   ├── lobby_scene.h/.cpp      # Pre-game lobby (mode/variant/time select, ESP-NOW pairing)
+│   ├── settings_scene.h/.cpp   # Settings UI (display, input, gameplay, wireless, data)
+│   ├── settings.h/.cpp         # Persisted user settings (NVS, CRC-guarded)
 │   ├── chess_scene.h/.cpp      # Game UI (board, widgets, input, animation, puzzles)
 │   ├── chess_types.h           # Piece, Square, Move data types
 │   ├── chess_board.h/.cpp      # Board state, make/unmake move

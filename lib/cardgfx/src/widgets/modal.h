@@ -78,6 +78,13 @@ public:
         markDirty();
     }
 
+    /** Pre-select a button (clamped). Call after show(). */
+    void setSelectedButton(uint8_t idx) {
+        if (m_buttonCount == 0) return;
+        m_selectedButton = (idx < m_buttonCount) ? idx : m_buttonCount - 1;
+        markDirty();
+    }
+
     /** Hide the modal. */
     void hide() {
         m_visible = false;

@@ -7,10 +7,12 @@
 #include "chess_net_protocol.h"
 #include "puzzle_data.h"
 #include "puzzle_storage.h"
+#include "settings.h"
 
 using namespace CardGFX;
 
 class ChessScene; // Forward declaration
+class SettingsScene; // Forward declaration
 
 // =====================================================================
 // LobbyScene: Pre-game screen for local/online mode selection,
@@ -20,7 +22,7 @@ class ChessScene; // Forward declaration
 class LobbyScene : public Scene {
 public:
     LobbyScene();
-    void setup(ChessScene* chessScene);
+    void setup(ChessScene* chessScene, SettingsScene* settingsScene);
 
     // Scene lifecycle
     void onEnter() override;
@@ -44,6 +46,7 @@ private:
 
     LobbyState m_state = LobbyState::Menu;
     ChessScene* m_chessScene = nullptr;
+    SettingsScene* m_settingsScene = nullptr;
 
     // ── Variant / Mode State ──────────────────────────────────────
     ChessVariant m_selectedVariant = ChessVariant::Standard;

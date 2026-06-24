@@ -33,14 +33,16 @@ static void onRecvCb(const uint8_t* mac, const uint8_t* data, int len) {
 
 // ── Lifecycle ────────────────────────────────────────────────────────
 
-bool EspNowTransport::init() {
+bool EspNowTransport::init(uint8_t channel) {
     if (m_state != State::Idle) return true; // Already initialized
 
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
 
-    // Fix channel to 1 so both devices match
-    esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
+    // Fix channel so both devices match (must be identical for ESP-NOW).
+    // 1..11 are valid 2.4 GHz channels.
+    uint8_t ch = (channel >= 1 && channel <= 11) ? channel : 1;
+    esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
 
     // Store our MAC address
     WiFi.macAddress(m_ownMac);

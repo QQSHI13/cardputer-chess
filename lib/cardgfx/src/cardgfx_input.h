@@ -158,6 +158,15 @@ public:
     void clearBindings();
 
     /**
+     * Override the auto-repeat timings (ms). Lets the Settings UI tune
+     * key responsiveness at runtime without recompiling.
+     */
+    void setRepeatTimings(uint32_t delayMs, uint32_t rateMs) {
+        m_repeatDelay = delayMs;
+        m_repeatRate = rateMs;
+    }
+
+    /**
      * Process an event against the current bindings.
      * @return true if the event was consumed by a binding.
      */
@@ -187,6 +196,10 @@ private:
     uint8_t  m_repeatKey  = Key::NONE;
     uint32_t m_repeatTime = 0;
     bool     m_repeatActive = false;
+
+    // Configurable repeat timings (defaults from config.h)
+    uint32_t m_repeatDelay = KEY_REPEAT_DELAY_MS;
+    uint32_t m_repeatRate  = KEY_REPEAT_RATE_MS;
 
     // Bindings
     KeyBinding m_bindings[MAX_KEY_BINDINGS] = {};

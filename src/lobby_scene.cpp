@@ -1,5 +1,6 @@
 #include "lobby_scene.h"
 #include "chess_scene.h"
+#include "settings_scene.h"
 #include "chess_storage.h"
 #include "chess960.h"
 #include "esp_now_transport.h"
@@ -37,8 +38,9 @@ static void formatMacSuffix(const uint8_t mac[6], char* out) {
 
 LobbyScene::LobbyScene() : Scene("lobby") {}
 
-void LobbyScene::setup(ChessScene* chessScene) {
+void LobbyScene::setup(ChessScene* chessScene, SettingsScene* settingsScene) {
     m_chessScene = chessScene;
+    m_settingsScene = settingsScene;
 
     // ── Status Bar ───────────────────────────────────────────────
     m_statusBar.setBounds({0, 0, SCREEN_W, 12});
@@ -131,6 +133,10 @@ void LobbyScene::showMenu() {
         m_menuModal.hide();
         showPuzzleMenu();
     });
+    m_menuModal.addButton("Settings", [this]() {
+        m_menuModal.hide();
+        CardGFX::scenes().push(m_settingsScene);
+    });
 
     m_menuModal.show();
     focusChain().focusWidget(&m_menuModal);
@@ -164,6 +170,8 @@ void LobbyScene::showVariantMenu() {
     });
 
     m_menuModal.show();
+    // Pre-select the user's default variant.
+    m_menuModal.setSelectedButton(static_cast<uint8_t>(Settings::g.defaultVariant));
     focusChain().focusWidget(&m_menuModal);
 }
 
@@ -211,6 +219,8 @@ void LobbyScene::showTimeControlMenu() {
     });
 
     m_menuModal.show();
+    // Pre-select the user's default time control (enum value matches button order).
+    m_menuModal.setSelectedButton(static_cast<uint8_t>(Settings::g.defaultTimeCtrl));
     focusChain().focusWidget(&m_menuModal);
 }
 
@@ -306,7 +316,7 @@ void LobbyScene::startHosting() {
     m_titleLabel.setVisible(false);
 
     auto& transport = EspNowTransport::instance();
-    if (!transport.init()) {
+    if (!transport.init(Settings::g.espnowChannel)) {
         m_statusLabel.setText("ESP-NOW init failed!");
         showMenu();
         return;
@@ -331,7 +341,7 @@ void LobbyScene::startJoining() {
     m_titleLabel.setVisible(false);
 
     auto& transport = EspNowTransport::instance();
-    if (!transport.init()) {
+    if (!transport.init(Settings::g.espnowChannel)) {
         m_statusLabel.setText("ESP-NOW init failed!");
         showMenu();
         return;
@@ -466,7 +476,7 @@ void LobbyScene::onTick(uint32_t /*dt_ms*/) {
             }
         }
 
-        if (now - m_stateStartTime > 60000) {
+        if (now - m_stateStartTime > Settings::pairingTimeoutMs()) {
             m_statusLabel.setText("Timed out.");
             cancelPairing();
         }
@@ -552,7 +562,7 @@ void LobbyScene::onTick(uint32_t /*dt_ms*/) {
             }
         }
 
-        if (now - m_stateStartTime > 60000) {
+        if (now - m_stateStartTime > Settings::pairingTimeoutMs()) {
             m_menuModal.hide();
             m_statusLabel.setText("Timed out.");
             cancelPairing();

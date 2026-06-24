@@ -21,7 +21,7 @@ public:
     };
 
     // Lifecycle
-    bool init();       // WiFi STA mode + esp_now_init
+    bool init(uint8_t channel = 1);  // WiFi STA mode + esp_now_init
     void shutdown();   // esp_now_deinit + WiFi off
 
     // Peer management

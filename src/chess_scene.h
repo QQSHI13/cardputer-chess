@@ -12,6 +12,7 @@
 #include "chess_storage.h"
 #include "puzzle_data.h"
 #include "puzzle_storage.h"
+#include "settings.h"
 
 using namespace CardGFX;
 
@@ -78,6 +79,7 @@ private:
     struct MoveAnim {
         bool active = false;
         uint32_t elapsed = 0;
+        uint32_t duration = 0;   // ms for this animation (0 = not running)
         static constexpr uint32_t DURATION_MS = 250;
         Piece piece;
         bool isCapture = false;
@@ -116,6 +118,7 @@ private:
     AIDifficulty m_aiDifficulty = AIDifficulty::None;
     PieceColor   m_aiColor = PieceColor::Black;
     bool         m_aiThinking = false;
+    bool         m_aiUseBook = true;   // captured from Settings before AI task
 
     // AI runs on Core 0 via FreeRTOS so UI stays responsive on Hard
     ChessBoard   m_aiBoardCopy;

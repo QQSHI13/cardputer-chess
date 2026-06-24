@@ -298,9 +298,9 @@ static int16_t alphaBeta(ChessBoard& board, int depth, int16_t alpha, int16_t be
 
 // ── Public API ───────────────────────────────────────────────────────
 
-Move ChessAI::findBestMove(ChessBoard& board, AIDifficulty difficulty) {
-    // Try opening book first (standard position only)
-    if (board.variant() != ChessVariant::Chess960) {
+Move ChessAI::findBestMove(ChessBoard& board, AIDifficulty difficulty, bool useBook) {
+    // Try opening book first (standard position only), unless disabled.
+    if (useBook && board.variant() != ChessVariant::Chess960) {
         Move bookMove;
         if (ChessOpeningBook::probe(board, bookMove)) {
             return bookMove;

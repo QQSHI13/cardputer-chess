@@ -80,6 +80,9 @@ public:
     void setDrawBorder(bool draw) { m_drawBorder = draw; }
     void setDrawGrid(bool draw) { m_drawGridLines = draw; }
 
+    /** Cursor wraps around at edges instead of clamping. */
+    void setCursorWrap(bool wrap) { m_cursorWrap = wrap; markDirty(); }
+
     // ── Cursor ───────────────────────────────────────────────────
 
     uint8_t cursorCol() const { return m_cursorCol; }
@@ -216,15 +219,19 @@ public:
         switch (event.key) {
         case Key::UP:
             if (m_cursorRow > 0) { m_cursorRow--; markDirty(); }
+            else if (m_cursorWrap) { m_cursorRow = m_rows - 1; markDirty(); }
             return true;
         case Key::DOWN:
             if (m_cursorRow < m_rows - 1) { m_cursorRow++; markDirty(); }
+            else if (m_cursorWrap) { m_cursorRow = 0; markDirty(); }
             return true;
         case Key::LEFT:
             if (m_cursorCol > 0) { m_cursorCol--; markDirty(); }
+            else if (m_cursorWrap) { m_cursorCol = m_cols - 1; markDirty(); }
             return true;
         case Key::RIGHT:
             if (m_cursorCol < m_cols - 1) { m_cursorCol++; markDirty(); }
+            else if (m_cursorWrap) { m_cursorCol = 0; markDirty(); }
             return true;
         case Key::ENTER:
         case Key::SPACE:
@@ -252,6 +259,7 @@ private:
 
     bool m_drawBorder = false;
     bool m_drawGridLines = false;
+    bool m_cursorWrap = false;
 
     CellState m_cellFlags[MAX_ROWS][MAX_COLS] = {};
 

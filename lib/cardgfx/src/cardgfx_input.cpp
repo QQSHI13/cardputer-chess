@@ -184,8 +184,8 @@ void InputManager::poll() {
     if (m_repeatKey != Key::NONE && isKeyDown(m_repeatKey)) {
         uint32_t now = millis();
         uint32_t threshold = m_repeatActive
-                             ? KEY_REPEAT_RATE_MS
-                             : KEY_REPEAT_DELAY_MS;
+                             ? m_repeatRate
+                             : m_repeatDelay;
         if (now - m_repeatTime >= threshold) {
             InputEvent evt;
             evt.type = EventType::KeyRepeat;

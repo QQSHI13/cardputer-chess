@@ -21,7 +21,8 @@ namespace ChessAI {
 
     // Find the best move for the current side to move.
     // Returns a legal move. maxDepth and maxTimeMs are set by difficulty.
-    Move findBestMove(ChessBoard& board, AIDifficulty difficulty);
+    // useBook controls opening-book probing (caller may disable it).
+    Move findBestMove(ChessBoard& board, AIDifficulty difficulty, bool useBook = true);
 
     // Static evaluation of the position from the perspective of the side to move.
     // Positive = good for side to move, negative = bad.

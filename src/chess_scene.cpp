@@ -187,7 +187,7 @@ void ChessScene::onTick(uint32_t dt_ms) {
     // ── Move animation tick ──────────────────────────────────────
     if (m_moveAnim.active) {
         m_moveAnim.elapsed += dt_ms;
-        if (m_moveAnim.elapsed >= MoveAnim::DURATION_MS) {
+        if (m_moveAnim.elapsed >= m_moveAnim.duration) {
             m_moveAnim.active = false;
             // Apply deferred board flip (local pass-and-play)
             if (m_moveAnim.pendingFlip) {
@@ -262,6 +262,7 @@ void ChessScene::onTick(uint32_t dt_ms) {
 
         if (!m_aiThinking) {
             m_aiThinking = true;
+            m_aiUseBook = Settings::aiBook();
             updateStatusBar();
             m_aiBoardCopy = m_board;
             xTaskCreatePinnedToCore(aiTaskEntry, "chess_ai", 32768,
@@ -489,6 +490,11 @@ void ChessScene::newGame() {
     m_historyOverflow = false;
     m_legalMoves.clear();
 
+    // Apply persisted display defaults (T/B still toggle per-session).
+    m_useSprites = (Settings::g.pieceStyle == 0);
+    m_bwBoard    = (Settings::g.boardStyle == 1);
+    m_boardGrid.setCursorWrap(Settings::cursorWrap());
+
     m_moveList.clearItems();
     m_movesLabel.setText("Moves");
     m_boardGrid.clearAllFlags();
@@ -617,7 +623,8 @@ void ChessScene::executeMove(const Move& move) {
     char sanBuf[12];
     moveToSAN(sanBuf, sizeof(sanBuf), move, m_board, isCapture);
 
-    // Set up move animation
+    // Set up move animation (unless disabled in settings)
+    uint32_t animMs = Settings::animDurationMs();
     m_moveAnim.piece = m_board.at(move.from.col, move.from.row);
     // For promotions, show the promoted piece sliding
     if (move.promotion != PieceType::None) {
@@ -629,7 +636,8 @@ void ChessScene::executeMove(const Move& move) {
     m_moveAnim.toPx = toGridCol(move.to.col) * 15;
     m_moveAnim.toPy = toGridRow(move.to.row) * 15;
     m_moveAnim.elapsed = 0;
-    m_moveAnim.active = true;
+    m_moveAnim.duration = animMs;
+    m_moveAnim.active = (animMs > 0);
 
     // Store history for undo
     if (m_historyCount < MAX_HISTORY) {
@@ -747,8 +755,15 @@ void ChessScene::executeMove(const Move& move) {
     }
 
     // Delay board flip until animation completes (flip would break animation coords)
-    if (m_netMode == NetworkMode::Local && m_aiDifficulty == AIDifficulty::None && !m_puzzleMode) {
-        m_moveAnim.pendingFlip = true;
+    if (m_netMode == NetworkMode::Local && m_aiDifficulty == AIDifficulty::None &&
+        !m_puzzleMode && Settings::autoFlip()) {
+        if (animMs > 0) {
+            m_moveAnim.pendingFlip = true;
+        } else {
+            // No animation: flip immediately.
+            m_boardFlipped = (m_board.sideToMove() == PieceColor::Black);
+            m_boardGrid.setCursor(toGridCol(m_lastTo.col), toGridRow(m_lastTo.row));
+        }
     }
 }
 
@@ -799,7 +814,8 @@ void ChessScene::undoLastMove() {
     updateStatusBar();
 
     // Update flip for local pass-and-play mode after undo (not AI mode)
-    if (m_aiDifficulty == AIDifficulty::None && m_netMode == NetworkMode::Local) {
+    if (m_aiDifficulty == AIDifficulty::None && m_netMode == NetworkMode::Local &&
+        Settings::autoFlip()) {
         m_boardFlipped = (m_board.sideToMove() == PieceColor::Black);
     }
     updateBoardHighlights();
@@ -871,11 +887,13 @@ void ChessScene::updateBoardHighlights() {
     m_boardGrid.clearAllFlags();
 
     // Mark last move squares
-    if (!isNoSquare(m_lastFrom)) {
-        m_boardGrid.setMarked(toGridCol(m_lastFrom.col), toGridRow(m_lastFrom.row), true);
-    }
-    if (!isNoSquare(m_lastTo)) {
-        m_boardGrid.setMarked(toGridCol(m_lastTo.col), toGridRow(m_lastTo.row), true);
+    if (Settings::showLastMove()) {
+        if (!isNoSquare(m_lastFrom)) {
+            m_boardGrid.setMarked(toGridCol(m_lastFrom.col), toGridRow(m_lastFrom.row), true);
+        }
+        if (!isNoSquare(m_lastTo)) {
+            m_boardGrid.setMarked(toGridCol(m_lastTo.col), toGridRow(m_lastTo.row), true);
+        }
     }
 
     // Show selected piece
@@ -1055,8 +1073,8 @@ void ChessScene::renderCell(Canvas& canvas, uint8_t col, uint8_t gridRow,
     if (state.selected)  cellBg = theme.accentActive;
 
     // Capture flash
-    if (anim.active && anim.isCapture && isAnimTo) {
-        float t = (float)anim.elapsed / MoveAnim::DURATION_MS;
+    if (anim.active && anim.isCapture && isAnimTo && anim.duration > 0) {
+        float t = (float)anim.elapsed / (float)anim.duration;
         if (t < 0.3f) {
             cellBg = theme.error;
         }
@@ -1066,7 +1084,7 @@ void ChessScene::renderCell(Canvas& canvas, uint8_t col, uint8_t gridRow,
 
     // ── Valid move dot (on empty highlighted squares) ─────────────
     Piece piece = self->m_board.at(boardCol, boardRow);
-    if (state.highlight && piece.empty() && !state.selected) {
+    if (state.highlight && piece.empty() && !state.selected && Settings::showLegalDots()) {
         // Small dot in center
         int16_t dotCx = cx + cellW / 2;
         int16_t dotCy = cy + cellH / 2;
@@ -1132,7 +1150,7 @@ void ChessScene::renderCell(Canvas& canvas, uint8_t col, uint8_t gridRow,
     }
 
     // ── File/Rank labels (on empty edge cells only) ───────────────
-    if (piece.empty()) {
+    if (piece.empty() && Settings::showCoords()) {
         uint16_t labelColor = lightSquare ? cellB : cellA;
 
         // File labels (a-h) in bottom-right of bottom row
@@ -1159,8 +1177,8 @@ void ChessScene::renderCell(Canvas& canvas, uint8_t col, uint8_t gridRow,
     }
 
     // ── Sliding piece overlay (drawn on last cell so it's on top) ─
-    if (col == 7 && gridRow == 7 && anim.active) {
-        float t = (float)anim.elapsed / MoveAnim::DURATION_MS;
+    if (col == 7 && gridRow == 7 && anim.active && anim.duration > 0) {
+        float t = (float)anim.elapsed / (float)anim.duration;
         if (t > 1.0f) t = 1.0f;
         // Ease-out quadratic: decelerates into destination
         float eased = 1.0f - (1.0f - t) * (1.0f - t);
@@ -1253,6 +1271,7 @@ void ChessScene::rebuildMoveList() {
 void ChessScene::saveGameState() {
     // Don't save network games (connection can't survive power cycle)
     if (m_netMode == NetworkMode::Online) return;
+    if (!Settings::autoSave()) return;  // user disabled auto-save
 
     ChessStorage::saveGame(m_board, m_history, m_historyCount,
                            m_historyOverflow,
@@ -1571,7 +1590,8 @@ void ChessScene::clearAIMode() {
 void ChessScene::aiTaskEntry(void* param) {
     ChessScene* self = static_cast<ChessScene*>(param);
     if (!self || !self->m_aiSemaphore) { vTaskDelete(NULL); return; }
-    Move move = ChessAI::findBestMove(self->m_aiBoardCopy, self->m_aiDifficulty);
+    Move move = ChessAI::findBestMove(self->m_aiBoardCopy, self->m_aiDifficulty,
+                                     self->m_aiUseBook);
     MoveList legal;
     ChessRules::generateLegal(self->m_aiBoardCopy, legal);
     if (!legal.contains(move) && legal.count > 0) {
@@ -1714,8 +1734,9 @@ void ChessScene::pollNetwork() {
         sendHeartbeat();
     }
 
-    // Check for connection timeout (3 seconds without any packet)
-    if (!m_disconnectShown && transport.msSinceLastReceive() > 3000 &&
+    // Check for connection timeout (configurable threshold without any packet)
+    if (!m_disconnectShown &&
+        transport.msSinceLastReceive() > Settings::disconnectMsValue() &&
         m_uiState != UIState::GameOver && now >= m_disconnectGraceUntil) {
         onConnectionLost();
     }
