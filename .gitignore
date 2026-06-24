@@ -5,4 +5,8 @@
 .vscode/ipch
 .claude
 .DS_Store
+
+# Build artifacts
 firmware/*.bin
+bin/*/firmware.bin
+chess-merged.bin

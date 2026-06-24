@@ -1,53 +1,63 @@
 #include "chess_zobrist.h"
 #include <pgmspace.h>
 
-// Deterministic 32-bit random numbers for Zobrist hashing.
-// Generated from LFSR with seed 0x12345678.
-// Index: piece_index * 64 + row * 8 + col
-// piece_index: 0-11 (6 types x 2 colors: WP=0, BP=1, WN=2, BN=3, ...)
+// =====================================================================
+// Zobrist hashing for position identification.
+//
+// The random tables are generated at compile time with a constexpr
+// Galois LFSR (same taps as before: 32, 22, 2, 1) and live in flash
+// (.rodata) via `constexpr` storage, so they consume no SRAM. Reads
+// go through pgm_read_dword so the values are usable from any code
+// path (flash-mapped on ESP32, but pgm_read is the documented API).
+// =====================================================================
 
-static uint32_t lfsr32(uint32_t& state) {
-    // Galois LFSR with taps at 32, 22, 2, 1
-    uint32_t bit = ((state >> 0) ^ (state >> 1) ^ (state >> 21) ^ (state >> 31)) & 1;
-    state = (state >> 1) | (bit << 31);
-    return state;
+namespace {
+
+// 32-bit Galois LFSR with taps at bits 32, 22, 2, 1.
+// Deterministic given a seed — identical sequence to the previous
+// runtime generator, so existing opening-book hashes are unchanged.
+constexpr uint32_t lfsrNext(uint32_t state) {
+    uint32_t bit = ((state >> 0) ^ (state >> 1) ^ (state >> 21) ^ (state >> 31)) & 1u;
+    return (state >> 1) | (bit << 31);
 }
 
-// Generate table on first use (saves PROGMEM vs storing 3KB+ of constants)
-static uint32_t s_pieceTable[12 * 64]; // 12 piece types x 64 squares
-static uint32_t s_sideToMove;
-static uint32_t s_castleTable[16];
-static uint32_t s_epFileTable[8]; // en passant file (a-h)
-static bool s_initialized = false;
+// Build a table of `count` LFSR outputs starting from `seed`, returning
+// the final state so callers can chain generators.
+template <uint32_t Count>
+struct Table {
+    uint32_t data[Count] = {};
+    uint32_t finalState = 0;
+};
 
-static void initTable() {
-    if (s_initialized) return;
-    s_initialized = true;
-
-    uint32_t state = 0x12345678;
-    for (int i = 0; i < 12 * 64; i++) {
-        s_pieceTable[i] = lfsr32(state);
+template <uint32_t Count>
+constexpr Table<Count> buildTable(uint32_t seed) {
+    Table<Count> t{};
+    uint32_t state = seed;
+    for (uint32_t i = 0; i < Count; i++) {
+        state = lfsrNext(state);
+        t.data[i] = state;
     }
-    s_sideToMove = lfsr32(state);
-    for (int i = 0; i < 16; i++) {
-        s_castleTable[i] = lfsr32(state);
-    }
-    for (int i = 0; i < 8; i++) {
-        s_epFileTable[i] = lfsr32(state);
-    }
+    t.finalState = state;
+    return t;
 }
 
-static int pieceIndex(PieceType type, PieceColor color) {
-    // type: Pawn=1..King=6, color: White=0, Black=1
-    // Map to 0-11: (type-1)*2 + color
+// pieceIndex: 0-11 (6 types x 2 colors: WP=0, BP=1, WN=2, BN=3, ...)
+constexpr int pieceIndex(PieceType type, PieceColor color) {
     return (static_cast<int>(type) - 1) * 2 + static_cast<int>(color);
 }
+
+constexpr uint32_t PIECE_TABLE_COUNT = 12u * 64u;
+
+constexpr auto PIECE_TABLE = buildTable<PIECE_TABLE_COUNT>(0x12345678u);
+constexpr auto SIDE_TABLE  = buildTable<1>(PIECE_TABLE.finalState);
+constexpr auto CASTLE_TABLE = buildTable<16>(SIDE_TABLE.finalState);
+constexpr auto EP_TABLE    = buildTable<8>(CASTLE_TABLE.finalState);
+
+} // namespace
 
 namespace ChessZobrist {
 
 uint32_t hash(const ChessBoard& board) {
-    initTable();
-
     uint32_t h = 0;
 
     for (uint8_t r = 0; r < 8; r++) {
@@ -55,20 +65,20 @@ uint32_t hash(const ChessBoard& board) {
             Piece p = board.at(c, r);
             if (!p.empty()) {
                 int idx = pieceIndex(p.type, p.color);
-                h ^= s_pieceTable[idx * 64 + r * 8 + c];
+                h ^= pgm_read_dword(&PIECE_TABLE.data[idx * 64 + r * 8 + c]);
             }
         }
     }
 
     if (board.sideToMove() == PieceColor::Black) {
-        h ^= s_sideToMove;
+        h ^= pgm_read_dword(&SIDE_TABLE.data[0]);
     }
 
-    h ^= s_castleTable[board.castleRights() & 0x0F];
+    h ^= pgm_read_dword(&CASTLE_TABLE.data[board.castleRights() & 0x0F]);
 
     Square ep = board.enPassantTarget();
     if (!isNoSquare(ep)) {
-        h ^= s_epFileTable[ep.col];
+        h ^= pgm_read_dword(&EP_TABLE.data[ep.col]);
     }
 
     return h;

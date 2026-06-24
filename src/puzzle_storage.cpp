@@ -1,37 +1,29 @@
 #include "puzzle_storage.h"
-#include <SD.h>
+#include <Preferences.h>
 #include <cstring>
 
-static constexpr const char* SAVE_DIR  = "/chess";
-static constexpr const char* SAVE_PATH = "/chess/puzzles.dat";
+static constexpr const char* NVS_NAMESPACE = "chess";
+static constexpr const char* NVS_KEY = "puzzles";
 
 namespace PuzzleStorage {
 
-static bool ensureDir() {
-    if (!SD.exists(SAVE_DIR)) {
-        return SD.mkdir(SAVE_DIR);
-    }
-    return true;
-}
-
 void loadProgress(PuzzleProgress& progress) {
     memset(&progress, 0, sizeof(progress));
-    if (!SD.exists(SAVE_PATH)) return;
 
-    File f = SD.open(SAVE_PATH, FILE_READ);
-    if (!f) return;
-    if (f.size() >= sizeof(PuzzleProgress)) {
-        f.read((uint8_t*)&progress, sizeof(PuzzleProgress));
+    Preferences prefs;
+    prefs.begin(NVS_NAMESPACE, true);
+    size_t len = prefs.getBytesLength(NVS_KEY);
+    if (len >= sizeof(PuzzleProgress)) {
+        prefs.getBytes(NVS_KEY, &progress, sizeof(PuzzleProgress));
     }
-    f.close();
+    prefs.end();
 }
 
 void saveProgress(const PuzzleProgress& progress) {
-    ensureDir();
-    File f = SD.open(SAVE_PATH, FILE_WRITE);
-    if (!f) return;
-    f.write((const uint8_t*)&progress, sizeof(PuzzleProgress));
-    f.close();
+    Preferences prefs;
+    prefs.begin(NVS_NAMESPACE, false);
+    prefs.putBytes(NVS_KEY, &progress, sizeof(PuzzleProgress));
+    prefs.end();
 }
 
 bool isPuzzleCompleted(const PuzzleProgress& progress, uint8_t index) {

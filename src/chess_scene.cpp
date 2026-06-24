@@ -3,13 +3,9 @@
 #include "chess_sprites.h"
 #include "esp_now_transport.h"
 #include "puzzle_data.h"
-#include "chess_zobrist.h"
 #include <Arduino.h>
 #include <cstdio>
 #include <cstring>
-#include <freertos/FreeRTOS.h>
-#include <freertos/semphr.h>
-#include <freertos/task.h>
 
 // ── SAN Formatting ───────────────────────────────────────────────────
 // Must be called BEFORE the move is executed on the board.
@@ -111,22 +107,12 @@ static void moveToSAN(char* buf, uint8_t bufLen, const Move& move,
 // ChessScene Implementation
 // =====================================================================
 
-ChessScene::ChessScene() : Scene("chess") {}
-
+ChessScene::ChessScene() : Scene("chess") {
+    m_aiSemaphore = xSemaphoreCreateBinary();
+}
+ 
 ChessScene::~ChessScene() {
     cleanupAITask();
-}
-
-void ChessScene::cleanupAITask() {
-    if (m_aiTaskHandle != nullptr) {
-        vTaskDelete(static_cast<TaskHandle_t>(m_aiTaskHandle));
-        m_aiTaskHandle = nullptr;
-    }
-    if (m_aiSemaphore != nullptr) {
-        vSemaphoreDelete(static_cast<SemaphoreHandle_t>(m_aiSemaphore));
-        m_aiSemaphore = nullptr;
-    }
-    m_aiThinking = false;
 }
 
 void ChessScene::setup() {
@@ -180,16 +166,21 @@ void ChessScene::setup() {
 
     // Start a new game
     newGame();
-
-    // AI task semaphore
-    if (!m_aiSemaphore) {
-        m_aiSemaphore = xSemaphoreCreateBinary();
-    }
 }
 
 void ChessScene::onEnter() {
     // Focus the board grid
     focusChain().focusWidget(&m_boardGrid);
+}
+
+void ChessScene::onExit() {
+    // Defensive cleanup: cancel any in-flight AI search and tear down
+    // a live ESP-NOW session so a stale peer/MAC cannot leak into the
+    // next game started from the lobby.
+    cleanupAITask();
+    if (m_netMode == NetworkMode::Online) {
+        EspNowTransport::instance().shutdown();
+    }
 }
 
 void ChessScene::onTick(uint32_t dt_ms) {
@@ -260,7 +251,10 @@ void ChessScene::onTick(uint32_t dt_ms) {
         }
     }
 
-    // AI turn: run search on Core 0 via FreeRTOS so UI stays responsive.
+    // AI turn: two-phase approach so "Thinking..." renders before search blocks.
+    // Phase 1: set thinking flag → status bar updates → frame renders.
+    // Phase 2 (next tick): run search → execute move.
+    // Skip while move animation is playing.
     if (m_aiDifficulty != AIDifficulty::None &&
         !m_moveAnim.active &&
         m_uiState == UIState::SelectPiece &&
@@ -269,18 +263,15 @@ void ChessScene::onTick(uint32_t dt_ms) {
         if (!m_aiThinking) {
             m_aiThinking = true;
             updateStatusBar();
-            // Copy board and spawn AI task on Core 0
             m_aiBoardCopy = m_board;
             xTaskCreatePinnedToCore(aiTaskEntry, "chess_ai", 32768,
                                     this, 1,
                                     reinterpret_cast<TaskHandle_t*>(&m_aiTaskHandle), 0);
         } else {
-            // Poll for task completion
-            if (xSemaphoreTake(static_cast<SemaphoreHandle_t>(m_aiSemaphore), 0) == pdTRUE) {
+            if (m_aiSemaphore && xSemaphoreTake(m_aiSemaphore, 0) == pdTRUE) {
                 m_aiThinking = false;
-                // Delete the suspended AI task and clear its handle
                 if (m_aiTaskHandle != nullptr) {
-                    vTaskDelete(static_cast<TaskHandle_t>(m_aiTaskHandle));
+                    vTaskDelete(m_aiTaskHandle);
                     m_aiTaskHandle = nullptr;
                 }
                 Move aiMove = m_aiResultMove;
@@ -308,21 +299,21 @@ bool ChessScene::onInput(const InputEvent& event) {
     // Block input during move animation
     if (m_moveAnim.active) return true;
 
-    // Review mode navigation
+    // Review mode navigation: A=prev D=next
     if (m_uiState == UIState::Reviewing) {
         if (event.key == Key::ESCAPE) {
             exitReviewMode();
             return true;
         }
-        if (event.key == ',' || event.key == '<' || event.key == Key::LEFT || event.key == Key::UP) {
+        if (event.key == 'a' || event.key == 'A') {
             if (m_reviewIndex > 0) reviewGoTo(m_reviewIndex - 1);
             return true;
         }
-        if (event.key == '.' || event.key == '>' || event.key == Key::RIGHT || event.key == Key::DOWN) {
+        if (event.key == 'd' || event.key == 'D') {
             if (m_reviewIndex < m_historyCount) reviewGoTo(m_reviewIndex + 1);
             return true;
         }
-        return true; // Block all other input in review mode
+        // Allow board interaction — don't block, let grid handle moves
     }
 
     // If a modal is visible, let it handle input
@@ -388,6 +379,10 @@ bool ChessScene::onInput(const InputEvent& event) {
 
     case 'v':
     case 'V':
+        // Review mode replays historical positions into the live board,
+        // which would corrupt state if a remote move arrived mid-review.
+        // Disable it (and undo/new) during online play.
+        if (m_netMode == NetworkMode::Online) break;
         if (m_historyCount > 0 && !m_aiThinking && !m_puzzleMode) {
             enterReviewMode();
             return true;
@@ -469,10 +464,7 @@ bool ChessScene::onInput(const InputEvent& event) {
 // ── Game Logic ────────────────────────────────────────────────────
 
 void ChessScene::newGame() {
-    // Kill any in-flight AI task and reset semaphore so the next game
-    // doesn't accidentally consume a stale signal or apply an old move.
     cleanupAITask();
-
     // Clear puzzle state (in case we're coming from puzzle mode)
     m_puzzleMode = false;
     m_puzzleAutoPlayPending = false;
@@ -518,6 +510,7 @@ void ChessScene::newGame() {
 }
 
 void ChessScene::onCellAction(uint8_t gridCol, uint8_t gridRow) {
+    if (m_uiState == UIState::Reviewing) return;
     if (m_uiState == UIState::GameOver || m_uiState == UIState::PromotionPending) {
         return;
     }
@@ -939,22 +932,27 @@ void ChessScene::checkGameEnd() {
         showGameOverModal("Insufficient", "Material for mate.");
     } else if (isThreefoldRepetition()) {
         m_statusBar.setRight("Draw");
-        showGameOverModal("Repetition", "Game is a draw.");
+        showGameOverModal("Repetition", "Threefold repeat.");
     }
 }
 
 bool ChessScene::isThreefoldRepetition() {
-    uint32_t currentHash = ChessZobrist::hash(m_board);
+    if (m_historyCount == 0) return false;
+
+    // Replay the game from the initial position and count how many times
+    // the current position (pieces + side + castling + en-passant) recurs.
+    // The final position is included in the replay, so the count reflects
+    // total occurrences of the current position across the whole game.
     ChessBoard temp;
     temp.setVariant(m_variant);
     temp.setPositionIndex(m_positionIndex);
     temp.reset();
-    uint8_t count = (ChessZobrist::hash(temp) == currentHash) ? 1 : 0;
+
+    uint8_t matches = 0;
     for (uint8_t i = 0; i < m_historyCount; i++) {
         temp.makeMove(m_history[i].move);
-        if (ChessZobrist::hash(temp) == currentHash) {
-            count++;
-            if (count >= 3) return true;
+        if (temp.positionEquals(m_board)) {
+            if (++matches >= 3) return true;
         }
     }
     return false;
@@ -1344,10 +1342,6 @@ bool ChessScene::loadSavedGame() {
     }
 
     m_boardGrid.markDirty();
-
-    // If the saved game was already over, show the game-over state
-    checkGameEnd();
-
     return true;
 }
 
@@ -1357,7 +1351,7 @@ void ChessScene::enterReviewMode() {
     m_preReviewState = m_uiState;
     m_uiState = UIState::Reviewing;
     m_reviewIndex = m_historyCount;
-    m_hintBar.setText("[</>] [ESC]");
+    m_hintBar.setText("[A/D] [ESC]");
     m_movesLabel.setText("Review");
     if (m_historyCount > 0) {
         m_moveList.setSelected((m_reviewIndex - 1) / 2);
@@ -1576,6 +1570,7 @@ void ChessScene::clearAIMode() {
 
 void ChessScene::aiTaskEntry(void* param) {
     ChessScene* self = static_cast<ChessScene*>(param);
+    if (!self || !self->m_aiSemaphore) { vTaskDelete(NULL); return; }
     Move move = ChessAI::findBestMove(self->m_aiBoardCopy, self->m_aiDifficulty);
     MoveList legal;
     ChessRules::generateLegal(self->m_aiBoardCopy, legal);
@@ -1583,8 +1578,16 @@ void ChessScene::aiTaskEntry(void* param) {
         move = legal.moves[0];
     }
     self->m_aiResultMove = move;
-    xSemaphoreGive(static_cast<SemaphoreHandle_t>(self->m_aiSemaphore));
+    xSemaphoreGive(self->m_aiSemaphore);
     vTaskSuspend(nullptr);
+}
+
+void ChessScene::cleanupAITask() {
+    if (m_aiTaskHandle != nullptr) {
+        vTaskDelete(m_aiTaskHandle);
+        m_aiTaskHandle = nullptr;
+    }
+    m_aiThinking = false;
 }
 
 // ── Network Mode ─────────────────────────────────────────────────────
@@ -1600,6 +1603,9 @@ void ChessScene::setNetworkMode(PieceColor localColor) {
 }
 
 void ChessScene::clearNetworkMode() {
+    // Tear down ESP-NOW so a paired peer / MAC from the finished game
+    // does not leak into the next lobby session.
+    EspNowTransport::instance().shutdown();
     m_netMode = NetworkMode::Local;
     m_localColor = PieceColor::White;
     m_boardFlipped = false;

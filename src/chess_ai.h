@@ -11,11 +11,10 @@
 // =====================================================================
 
 enum class AIDifficulty : uint8_t {
-    None      = 0,
-    Beginner  = 4,  // Depth 1, 150ms, 50% random moves
-    Easy      = 1,  // Depth 2, 300ms, 40% random blunders
-    Medium    = 2,  // Depth 4, 1s
-    Hard      = 3   // Depth 6+, 3s
+    None   = 0,
+    Easy   = 1,  // Depth 2, 200ms, random blunders
+    Medium = 2,  // Depth 4, 1s
+    Hard   = 3   // Depth 6+, 3s
 };
 
 namespace ChessAI {

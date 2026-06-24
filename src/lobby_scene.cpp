@@ -246,11 +246,6 @@ void LobbyScene::showAIDifficultyMenu() {
     m_menuModal.setTitle("Difficulty");
     m_menuModal.setMessage("Choose level:");
 
-    m_menuModal.addButton("Beginner", [this]() {
-        m_selectedDifficulty = AIDifficulty::Beginner;
-        m_menuModal.hide();
-        showAIColorMenu();
-    });
     m_menuModal.addButton("Easy", [this]() {
         m_selectedDifficulty = AIDifficulty::Easy;
         m_menuModal.hide();
@@ -456,7 +451,7 @@ void LobbyScene::onTick(uint32_t /*dt_ms*/) {
                 static_cast<NetMsgType>(buf[0]) == NetMsgType::AcceptGame) {
                 AcceptGameMsg accept;
                 memcpy(&accept, buf, sizeof(AcceptGameMsg));
-                if (accept.version == NET_PROTOCOL_VERSION && accept.gameId == m_gameId) {
+                if (accept.gameId == m_gameId) {
                     transport.addPeer(mac);
                     GameStartMsg start;
                     start.yourColor = 1;

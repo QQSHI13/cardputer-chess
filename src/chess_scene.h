@@ -2,6 +2,9 @@
 #define CHESS_SCENE_H
 
 #include <cardgfx.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
 #include "chess_board.h"
 #include "chess_rules.h"
 #include "chess_ai.h"
@@ -31,6 +34,7 @@ public:
 
     // Scene lifecycle
     void onEnter() override;
+    void onExit() override;
     void onTick(uint32_t dt_ms) override;
     bool onInput(const InputEvent& event) override;
 
@@ -116,8 +120,8 @@ private:
     // AI runs on Core 0 via FreeRTOS so UI stays responsive on Hard
     ChessBoard   m_aiBoardCopy;
     Move         m_aiResultMove;
-    void*        m_aiSemaphore = nullptr;
-    void*        m_aiTaskHandle = nullptr;
+    SemaphoreHandle_t m_aiSemaphore = nullptr;
+    TaskHandle_t m_aiTaskHandle = nullptr;
     static void  aiTaskEntry(void* param);
     void         cleanupAITask();
 

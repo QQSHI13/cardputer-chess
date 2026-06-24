@@ -2,6 +2,7 @@
 #define CHESS_BOARD_H
 
 #include "chess_types.h"
+#include <cstring>
 
 // =====================================================================
 // ChessBoard: 8x8 board state with make/unmake move support.
@@ -44,6 +45,14 @@ public:
     void setEnPassantTarget(Square s) { m_enPassantTarget = s; }
     void setHalfmoveClock(uint8_t c) { m_halfmoveClock = c; }
     void setFullmoveNumber(uint16_t n) { m_fullmoveNumber = n; }
+
+    // Compare position state (pieces + side + castling + ep) for repetition
+    bool positionEquals(const ChessBoard& other) const {
+        if (m_sideToMove != other.m_sideToMove) return false;
+        if (m_castleRights != other.m_castleRights) return false;
+        if (m_enPassantTarget != other.m_enPassantTarget) return false;
+        return memcmp(m_board, other.m_board, sizeof(m_board)) == 0;
+    }
 
     // Variant
     ChessVariant variant() const { return m_variant; }

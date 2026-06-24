@@ -74,6 +74,23 @@ static const int8_t PST_KING_MID[64] = {
    -30,-40,-40,-50,-50,-40,-40,-30
 };
 
+// Endgame king: encourage centralization and active king. Used once the
+// total non-king material drops below ENDGAME_MATERIAL.
+static const int8_t PST_KING_END[64] = {
+   -50,-40,-30,-20,-20,-30,-40,-50,
+   -30,-20,-10,  0,  0,-10,-20,-30,
+   -30,-10, 20, 30, 30, 20,-10,-30,
+   -30,-10, 30, 40, 40, 30,-10,-30,
+   -30,-10, 30, 40, 40, 30,-10,-30,
+   -30,-10, 20, 30, 30, 20,-10,-30,
+   -30,-20,-10,  0,  0,-10,-20,-30,
+   -50,-40,-30,-20,-20,-30,-40,-50
+};
+
+// Total non-king material (centipawns) below which we treat the position
+// as an endgame for king PST selection.
+static constexpr int16_t ENDGAME_MATERIAL = 1300;
+
 // ── Helpers ──────────────────────────────────────────────────────────
 
 static const int16_t MATERIAL[] = {
@@ -86,7 +103,8 @@ static const int16_t MATERIAL[] = {
     0     // King (not counted in material)
 };
 
-static int8_t pstValue(PieceType type, uint8_t col, uint8_t row, PieceColor color) {
+static int8_t pstValue(PieceType type, uint8_t col, uint8_t row, PieceColor color,
+                        bool kingEndgame) {
     // Tables are from White's perspective; mirror row for Black
     uint8_t r = (color == PieceColor::White) ? row : (7 - row);
     uint8_t idx = r * 8 + col;
@@ -97,7 +115,7 @@ static int8_t pstValue(PieceType type, uint8_t col, uint8_t row, PieceColor colo
     case PieceType::Bishop: return PST_BISHOP[idx];
     case PieceType::Rook:   return PST_ROOK[idx];
     case PieceType::Queen:  return PST_QUEEN[idx];
-    case PieceType::King:   return PST_KING_MID[idx];
+    case PieceType::King:   return kingEndgame ? PST_KING_END[idx] : PST_KING_MID[idx];
     default: return 0;
     }
 }
@@ -106,6 +124,17 @@ static int8_t pstValue(PieceType type, uint8_t col, uint8_t row, PieceColor colo
 
 int16_t ChessAI::evaluate(const ChessBoard& board) {
     int16_t score = 0;
+    int16_t nonKingMaterial = 0;
+
+    // First pass: material + decide endgame phase
+    for (uint8_t row = 0; row < 8; row++) {
+        for (uint8_t col = 0; col < 8; col++) {
+            Piece p = board.at(col, row);
+            if (p.empty() || p.type == PieceType::King) continue;
+            nonKingMaterial += MATERIAL[static_cast<uint8_t>(p.type)];
+        }
+    }
+    bool kingEndgame = (nonKingMaterial < ENDGAME_MATERIAL);
 
     for (uint8_t row = 0; row < 8; row++) {
         for (uint8_t col = 0; col < 8; col++) {
@@ -113,7 +142,7 @@ int16_t ChessAI::evaluate(const ChessBoard& board) {
             if (p.empty()) continue;
 
             int16_t val = MATERIAL[static_cast<uint8_t>(p.type)]
-                        + pstValue(p.type, col, row, p.color);
+                        + pstValue(p.type, col, row, p.color, kingEndgame);
 
             if (p.color == PieceColor::White) {
                 score += val;
@@ -178,11 +207,27 @@ static void sortMoves(MoveList& moves, const ChessBoard& board) {
 
 static uint32_t s_searchDeadline = 0;
 static bool     s_searchAborted  = false;
+static uint32_t s_nodeCount      = 0;
+
+// Poll the clock every N nodes instead of every node — millis() is cheap
+// but call overhead matters in the hot inner loop. N is small enough that
+// we never overshoot the deadline by more than a fraction of a second even
+// in the deepest quiescence explosions.
+static constexpr uint32_t NODES_PER_TIME_CHECK = 1024;
+
+static inline void checkTime() {
+    if (s_nodeCount++ % NODES_PER_TIME_CHECK == 0 &&
+        millis() > s_searchDeadline) {
+        s_searchAborted = true;
+    }
+}
 
 static constexpr int MAX_QUIESCE_DEPTH = 8;
 
 // Quiescence search: only consider captures to avoid horizon effect
 static int16_t quiesce(ChessBoard& board, int16_t alpha, int16_t beta, int qdepth) {
+    if (s_searchAborted) return 0;
+    checkTime();
     if (s_searchAborted) return 0;
 
     int16_t standPat = ChessAI::evaluate(board);
@@ -213,11 +258,9 @@ static int16_t quiesce(ChessBoard& board, int16_t alpha, int16_t beta, int qdept
 }
 
 static int16_t alphaBeta(ChessBoard& board, int depth, int16_t alpha, int16_t beta) {
-    // Check time limit periodically
-    if ((depth <= 0 || depth % 2 == 0) && millis() > s_searchDeadline) {
-        s_searchAborted = true;
-        return 0;
-    }
+    if (s_searchAborted) return 0;
+    checkTime();
+    if (s_searchAborted) return 0;
 
     if (depth <= 0) {
         return quiesce(board, alpha, beta, 0);
@@ -268,15 +311,15 @@ Move ChessAI::findBestMove(ChessBoard& board, AIDifficulty difficulty) {
     uint32_t maxTimeMs;
 
     switch (difficulty) {
-    case AIDifficulty::Beginner: maxDepth = 1; maxTimeMs = 150; break;
-    case AIDifficulty::Easy:     maxDepth = 2; maxTimeMs = 300; break;
-    case AIDifficulty::Medium:   maxDepth = 4; maxTimeMs = 1000; break;
-    case AIDifficulty::Hard:     maxDepth = 6; maxTimeMs = 3000; break;
-    default:                     maxDepth = 3; maxTimeMs = 500;  break;
+    case AIDifficulty::Easy:   maxDepth = 2; maxTimeMs = 200;  break;
+    case AIDifficulty::Medium: maxDepth = 4; maxTimeMs = 1000; break;
+    case AIDifficulty::Hard:   maxDepth = 6; maxTimeMs = 3000; break;
+    default:                   maxDepth = 3; maxTimeMs = 500;  break;
     }
 
     s_searchDeadline = millis() + maxTimeMs;
     s_searchAborted = false;
+    s_nodeCount = 0;
 
     MoveList moves;
     ChessRules::generateLegal(board, moves);
@@ -323,16 +366,9 @@ Move ChessAI::findBestMove(ChessBoard& board, AIDifficulty difficulty) {
         }
     }
 
-    // Beginner: 50% chance to pick a random legal move
-    if (difficulty == AIDifficulty::Beginner && moves.count > 1) {
-        if ((esp_random() % 100) < 50) {
-            uint8_t idx = esp_random() % moves.count;
-            bestMove = moves.moves[idx];
-        }
-    }
-    // Easy mode: 40% chance to pick a random legal move instead of the best
-    else if (difficulty == AIDifficulty::Easy && moves.count > 1) {
-        if ((esp_random() % 100) < 40) {
+    // Easy mode: 30% chance to pick a random legal move instead of the best
+    if (difficulty == AIDifficulty::Easy && moves.count > 1) {
+        if ((esp_random() % 100) < 30) {
             uint8_t idx = esp_random() % moves.count;
             bestMove = moves.moves[idx];
         }

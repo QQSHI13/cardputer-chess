@@ -131,8 +131,9 @@ static const SimplePuzzle SIMPLE_PUZZLES[] = {
     // ── Tactics (15-17) ────────────────────────────────────────
 
     // 15: Knight fork. Nd4-e6 forks Kg7 and Qc5.
-    // W: Kg1(6,0) Nd4(3,3). B: Kg7(6,6) Qc5(2,4).
-    {"......K." "........" "........" "...N...." "..q....." "........" "......k." "........",
+    // W: Kh1(7,0) Nd4(3,3). B: Kg7(6,6) Qc5(2,4).
+    // King on h1 avoids queen check on the c5-g1 diagonal after knight vacates d4.
+    {".......K" "........" "........" "...N...." "..q....." "........" "......k." "........",
      0, PuzzleType::Tactic, 55, 1, {{3,3, 4,5}}},
 
     // 16: Pin wins piece. Bg5 pins Nf6 to Qd8. Bxf6 wins knight.
