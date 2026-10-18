@@ -138,6 +138,9 @@ private:
     // Network ack/retransmit state
     bool     m_awaitingAck = false;
     uint8_t  m_lastSentSeq = 0;
+    uint8_t  m_sendSeq = 0;       // Sequence for the next outgoing move (wraps)
+    uint8_t  m_recvSeq = 0;       // Next expected incoming move sequence
+    bool     m_lastSentValid = false; // m_lastSentMove holds a real local move
     uint32_t m_lastSendTime = 0;
     uint8_t  m_retryCount = 0;
     MoveNetMsg m_lastSentMove;    // For retransmission

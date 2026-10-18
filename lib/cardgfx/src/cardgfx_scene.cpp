@@ -105,6 +105,12 @@ void Scene::drawWidgets(Canvas& framebuffer, const Theme& theme) {
     }
 }
 
+void Scene::markWidgetsDirty() {
+    for (uint8_t i = 0; i < m_widgetCount; i++) {
+        if (m_widgets[i]) m_widgets[i]->markDirty();
+    }
+}
+
 bool Scene::routeInput(const InputEvent& event) {
     // Bare ;,./ → arrow keys (Cardputer has no hardware arrows).
     // Suppressed when a text-accepting widget is focused.
@@ -230,6 +236,9 @@ void SceneManager::processFrame(uint32_t dt_ms, InputManager& input,
     // Clear framebuffer when switching to a different scene
     if (current != m_lastRendered) {
         fb.fill(theme.bgPrimary);
+        // The framebuffer was cleared — every widget must redraw, even
+        // those whose own state didn't change.
+        current->markWidgetsDirty();
         m_lastRendered = current;
     }
 
@@ -255,6 +264,7 @@ void SceneManager::processFrame(uint32_t dt_ms, InputManager& input,
         current = afterInput;
         if (!current) return;
         fb.fill(theme.bgPrimary);
+        current->markWidgetsDirty();
         m_lastRendered = current;
     }
 
@@ -267,8 +277,12 @@ void SceneManager::processFrame(uint32_t dt_ms, InputManager& input,
         updateTransition(dt_ms, fb);
     }
 
-    // 5. Push framebuffer to screen
-    fb.pushToScreen(0, 0, false);  // Full push for simplicity
+    // 5. Push framebuffer to screen.
+    // Dirty-only: all drawing goes through Canvas ops (widget blits, overlays)
+    // which mark the framebuffer dirty, and the transition effect marks all
+    // dirty while it writes the raw buffer — so partial pushes are complete.
+    // Frames where nothing changed cost no SPI traffic at all.
+    fb.pushToScreen(0, 0, true);
 }
 
 void SceneManager::startTransition(Transition t) {

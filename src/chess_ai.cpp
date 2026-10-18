@@ -204,6 +204,13 @@ static void sortMoves(MoveList& moves, const ChessBoard& board) {
 }
 
 // ── Search ───────────────────────────────────────────────────────────
+//
+// Note on stack usage: quiesce() and alphaBeta() each keep a full MoveList
+// (MoveList::MAX_MOVES moves) on the stack per recursion level, and the
+// worst case nests alphaBeta frames plus MAX_QUIESCE_DEPTH quiesce frames
+// inside each other. The AI task running this search is created with a
+// 40 KB stack in chess_scene.cpp — keep the two in sync when changing
+// MAX_MOVES or MAX_QUIESCE_DEPTH.
 
 static uint32_t s_searchDeadline = 0;
 static bool     s_searchAborted  = false;
@@ -224,27 +231,43 @@ static inline void checkTime() {
 
 static constexpr int MAX_QUIESCE_DEPTH = 8;
 
-// Quiescence search: only consider captures to avoid horizon effect
+// Quiescence search: resolve captures and promotions to avoid horizon
+// effects. When the side to move is in check, standing pat is not an
+// option — every legal evasion must be searched (with mate detection),
+// otherwise the eval of an in-check position leaks into the score.
 static int16_t quiesce(ChessBoard& board, int16_t alpha, int16_t beta, int qdepth) {
     if (s_searchAborted) return 0;
     checkTime();
     if (s_searchAborted) return 0;
 
-    int16_t standPat = ChessAI::evaluate(board);
-    if (standPat >= beta) return beta;
-    if (standPat > alpha) alpha = standPat;
+    bool inCheck = ChessRules::isInCheck(board, board.sideToMove());
 
-    if (qdepth >= MAX_QUIESCE_DEPTH) return alpha;
+    if (!inCheck) {
+        int16_t standPat = ChessAI::evaluate(board);
+        if (standPat >= beta) return beta;
+        if (standPat > alpha) alpha = standPat;
+        if (qdepth >= MAX_QUIESCE_DEPTH) return alpha;
+    } else if (qdepth >= MAX_QUIESCE_DEPTH) {
+        // Deep check-evasion chain — fall back to a static estimate to
+        // bound the recursion.
+        return ChessAI::evaluate(board);
+    }
 
     MoveList moves;
     ChessRules::generateLegal(board, moves);
 
+    if (inCheck && moves.count == 0) {
+        return -10000 + qdepth; // Checkmated (prefer faster mates)
+    }
+
     for (uint8_t i = 0; i < moves.count; i++) {
         const Move& m = moves.moves[i];
 
-        // Only consider captures and promotions
-        bool isCapture = !board.at(m.to.col, m.to.row).empty() || m.isEnPassant;
-        if (!isCapture && m.promotion == PieceType::None) continue;
+        // Out of check, only captures and promotions extend the search
+        if (!inCheck) {
+            bool isCapture = !board.at(m.to.col, m.to.row).empty() || m.isEnPassant;
+            if (!isCapture && m.promotion == PieceType::None) continue;
+        }
 
         MoveRecord rec = board.makeMove(m);
         int16_t score = -quiesce(board, -beta, -alpha, qdepth + 1);

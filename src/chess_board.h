@@ -70,6 +70,13 @@ public:
         m_initRookQS = rookQS;
     }
 
+    // Recompute the castling reference columns from the current variant and
+    // position index. Must be called after setVariant()/setPositionIndex()
+    // whenever the board state is loaded instead of reset — reset() embeds
+    // this, but ChessStorage::loadGame() overwrites the squares of a board
+    // that was reset before the saved variant/index were known.
+    void refreshInitialColumns();
+
 private:
     Piece        m_board[8][8];       // [row][col]
     PieceColor   m_sideToMove;

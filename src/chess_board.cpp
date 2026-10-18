@@ -5,25 +5,33 @@ ChessBoard::ChessBoard() {
     reset();
 }
 
-void ChessBoard::reset() {
-    // Clear the board
-    memset(m_board, 0, sizeof(m_board));
-
+void ChessBoard::refreshInitialColumns() {
     if (m_variant == ChessVariant::Chess960) {
         Chess960Position pos = chess960Generate(m_positionIndex);
         m_initKingCol = pos.kingCol;
         m_initRookKS = pos.rookKS;
         m_initRookQS = pos.rookQS;
+    } else {
+        m_initKingCol = 4;
+        m_initRookKS = 7;
+        m_initRookQS = 0;
+    }
+}
 
+void ChessBoard::reset() {
+    // Clear the board
+    memset(m_board, 0, sizeof(m_board));
+
+    // Castling reference columns follow the variant / 960 index.
+    refreshInitialColumns();
+
+    if (m_variant == ChessVariant::Chess960) {
+        Chess960Position pos = chess960Generate(m_positionIndex);
         for (uint8_t c = 0; c < 8; c++) {
             m_board[0][c] = makePiece(pos.backRank[c], PieceColor::White);
             m_board[7][c] = makePiece(pos.backRank[c], PieceColor::Black);
         }
     } else {
-        m_initKingCol = 4;
-        m_initRookKS = 7;
-        m_initRookQS = 0;
-
         // White pieces (row 0 = rank 1)
         m_board[0][0] = makePiece(PieceType::Rook,   PieceColor::White);
         m_board[0][1] = makePiece(PieceType::Knight, PieceColor::White);

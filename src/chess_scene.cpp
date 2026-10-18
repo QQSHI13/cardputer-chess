@@ -251,6 +251,14 @@ void ChessScene::onTick(uint32_t dt_ms) {
         }
     }
 
+    // If the game ended while the AI was searching (e.g. flag fall), stop
+    // and reap the search task now — the result-polling branch below is
+    // skipped once m_uiState leaves SelectPiece, so otherwise the task
+    // (and the "Thinking..." state) would linger into the next game.
+    if (m_aiThinking && m_uiState == UIState::GameOver) {
+        cleanupAITask();
+    }
+
     // AI turn: two-phase approach so "Thinking..." renders before search blocks.
     // Phase 1: set thinking flag → status bar updates → frame renders.
     // Phase 2 (next tick): run search → execute move.
@@ -265,9 +273,15 @@ void ChessScene::onTick(uint32_t dt_ms) {
             m_aiUseBook = Settings::aiBook();
             updateStatusBar();
             m_aiBoardCopy = m_board;
-            xTaskCreatePinnedToCore(aiTaskEntry, "chess_ai", 32768,
+            BaseType_t created = xTaskCreatePinnedToCore(
+                                    aiTaskEntry, "chess_ai", 40960,
                                     this, 1,
                                     reinterpret_cast<TaskHandle_t*>(&m_aiTaskHandle), 0);
+            if (created != pdPASS) {
+                // Out of memory — don't hang on "Thinking..." forever.
+                m_aiTaskHandle = nullptr;
+                m_aiThinking = false;
+            }
         } else {
             if (m_aiSemaphore && xSemaphoreTake(m_aiSemaphore, 0) == pdTRUE) {
                 m_aiThinking = false;
@@ -684,6 +698,7 @@ void ChessScene::executeMove(const Move& move) {
             // Correct move
             m_puzzleSolutionStep++;
             m_puzzleHintLevel = 0;
+            m_statusBar.setRight("");   // clear a previous "Try again"
 
             if (m_puzzleSolutionStep >= m_puzzleSolutionLen) {
                 // Puzzle solved!
@@ -825,6 +840,11 @@ void ChessScene::undoLastMove() {
 }
 
 void ChessScene::updateStatusBar() {
+    // Puzzle mode owns its status text (set by setPuzzleMode and the puzzle
+    // move logic) — the generic turn / move / coordinate display below
+    // would otherwise overwrite it on the very next tick.
+    if (m_puzzleMode) return;
+
     // Left: whose turn / online status / AI status
     if (m_aiThinking) {
         m_statusBar.setLeft("Thinking...");
@@ -1305,6 +1325,12 @@ bool ChessScene::loadSavedGame() {
     m_positionIndex = posIndex;
     m_board.setVariant(variant);
     m_board.setPositionIndex(posIndex);
+    // ChessStorage::loadGame() reset the board before the saved variant and
+    // position index were known, so the castling reference columns still
+    // reflect the previous variant/index. Re-derive them from the saved
+    // 960 position — otherwise castling in a resumed 960 game uses the
+    // wrong rook squares (or is rejected outright).
+    m_board.refreshInitialColumns();
     m_timeControl = tc;
     m_timeWhiteMs = twMs;
     m_timeBlackMs = tbMs;
@@ -1607,6 +1633,13 @@ void ChessScene::cleanupAITask() {
         vTaskDelete(m_aiTaskHandle);
         m_aiTaskHandle = nullptr;
     }
+    // Drain any completion token from the semaphore and drop the stale
+    // result: if a search finished after the game ended, the next game
+    // must not consume it as if it belonged to the new position.
+    if (m_aiSemaphore) {
+        xSemaphoreTake(m_aiSemaphore, 0);
+    }
+    m_aiResultMove = Move{};
     m_aiThinking = false;
 }
 
@@ -1619,6 +1652,9 @@ void ChessScene::setNetworkMode(PieceColor localColor) {
     m_awaitingAck = false;
     m_retryCount = 0;
     m_disconnectShown = false;
+    m_sendSeq = 0;
+    m_recvSeq = 0;
+    m_lastSentValid = false;
     newGame();
 }
 
@@ -1636,13 +1672,20 @@ void ChessScene::clearNetworkMode() {
     m_lastSendTime = 0;
     m_retryCount = 0;
     m_disconnectGraceUntil = 0;
+    m_sendSeq = 0;
+    m_recvSeq = 0;
+    m_lastSentValid = false;
     newGame();
 }
 
 void ChessScene::sendMove(const Move& move) {
-    uint8_t seq = (uint8_t)(m_historyCount); // Use history count as sequence
+    // Dedicated per-device send counter (wraps at 256). Independent of the
+    // history length so the sequence keeps advancing even after the 250-ply
+    // history cap is reached.
+    uint8_t seq = m_sendSeq++;
     m_lastSentMove = moveToNetMsg(move, seq);
     m_lastSentSeq = seq;
+    m_lastSentValid = true;
     m_awaitingAck = true;
     m_retryCount = 0;
     m_lastSendTime = millis();
@@ -1694,6 +1737,7 @@ void ChessScene::pollNetwork() {
                 memcpy(&ack, buf, sizeof(MoveAckMsg));
                 if (m_awaitingAck && ack.seq == m_lastSentSeq) {
                     m_awaitingAck = false;
+                    m_lastSentValid = false;
                 }
             }
             break;
@@ -1743,14 +1787,17 @@ void ChessScene::pollNetwork() {
 }
 
 void ChessScene::onRemoteMoveReceived(const MoveNetMsg& msg) {
-    // Send ack immediately
+    // Send ack immediately (also re-acks duplicates whose ack was lost)
     MoveAckMsg ack;
     ack.seq = msg.seq;
     EspNowTransport::instance().send(
         reinterpret_cast<const uint8_t*>(&ack), sizeof(ack));
 
-    // Deduplicate: if we've already applied this move, skip
-    if (msg.seq < m_historyCount) return;
+    // Deduplicate: only the next expected sequence number is applied.
+    // Retransmissions of an already-applied move (lost ack) are ignored
+    // but still acked above. Equality-based so it keeps working past the
+    // 250-ply history cap and across the uint8_t wrap.
+    if (msg.seq != m_recvSeq) return;
 
     // Convert to Move and validate
     Move move = netMsgToMove(msg);
@@ -1765,6 +1812,7 @@ void ChessScene::onRemoteMoveReceived(const MoveNetMsg& msg) {
     m_applyingRemoteMove = true;
     executeMove(move);
     m_applyingRemoteMove = false;
+    m_recvSeq++;
 }
 
 void ChessScene::onConnectionLost() {
@@ -1779,8 +1827,10 @@ void ChessScene::onConnectionLost() {
         m_gameOverModal.hide();
         m_disconnectShown = false;
         m_disconnectGraceUntil = millis() + 5000; // 5s grace before re-checking
-        // Resume retransmission of pending move if one was lost
-        if (m_lastSentSeq >= m_historyCount - 1 && m_historyCount > 0) {
+        // Resume retransmission of the last local move: if the opponent
+        // never received it this recovers the game; if it was already
+        // applied, the opponent's sequence check ignores it and re-acks.
+        if (m_lastSentValid) {
             m_awaitingAck = true;
             m_retryCount = 0;
             m_lastSendTime = millis();

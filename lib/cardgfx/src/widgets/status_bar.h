@@ -25,20 +25,29 @@ public:
 
     StatusBar() { m_focusable = false; }
 
+    // Setters only mark dirty when the text actually changes: updateStatusBar()
+    // is called every tick, and unconditional markDirty() would redraw the bar
+    // (with a fresh temp canvas) on every single frame.
     void setLeft(const char* text) {
-        strncpy(m_left, text ? text : "", MAX_SEG_LEN - 1);
+        const char* t = text ? text : "";
+        if (strncmp(m_left, t, MAX_SEG_LEN) == 0) return;
+        strncpy(m_left, t, MAX_SEG_LEN - 1);
         m_left[MAX_SEG_LEN - 1] = '\0';
         markDirty();
     }
 
     void setCenter(const char* text) {
-        strncpy(m_center, text ? text : "", MAX_SEG_LEN - 1);
+        const char* t = text ? text : "";
+        if (strncmp(m_center, t, MAX_SEG_LEN) == 0) return;
+        strncpy(m_center, t, MAX_SEG_LEN - 1);
         m_center[MAX_SEG_LEN - 1] = '\0';
         markDirty();
     }
 
     void setRight(const char* text) {
-        strncpy(m_right, text ? text : "", MAX_SEG_LEN - 1);
+        const char* t = text ? text : "";
+        if (strncmp(m_right, t, MAX_SEG_LEN) == 0) return;
+        strncpy(m_right, t, MAX_SEG_LEN - 1);
         m_right[MAX_SEG_LEN - 1] = '\0';
         markDirty();
     }

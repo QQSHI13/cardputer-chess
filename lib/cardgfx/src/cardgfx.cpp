@@ -68,10 +68,12 @@ const Theme& theme()   { return s_activeTheme; }
 
 void setTheme(const Theme& theme) {
     s_activeTheme = theme;
-    // Mark all widgets as dirty so they redraw with new theme
+    // Redraw everything with the new theme: widgets must be marked dirty
+    // (their own setters may skip identical text) and the framebuffer needs
+    // a full push.
     Scene* active = s_sceneManager.active();
     if (active) {
-        // Force a full redraw
+        active->markWidgetsDirty();
         s_framebuffer.markAllDirty();
     }
 }

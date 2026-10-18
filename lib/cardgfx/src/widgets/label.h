@@ -21,9 +21,13 @@ public:
 
     Label() { m_focusable = false; }
 
+    // Only mark dirty when the text actually changes (callers may set the
+    // same text every tick).
     void setText(const char* text) {
-        if (!text) { m_text[0] = '\0'; }
-        else { strncpy(m_text, text, MAX_TEXT - 1); m_text[MAX_TEXT - 1] = '\0'; }
+        const char* t = text ? text : "";
+        if (strncmp(m_text, t, MAX_TEXT) == 0) return;
+        strncpy(m_text, t, MAX_TEXT - 1);
+        m_text[MAX_TEXT - 1] = '\0';
         markDirty();
     }
 

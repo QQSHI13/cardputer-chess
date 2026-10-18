@@ -188,8 +188,9 @@ Step through the game's move history to analyze past positions.
 
 | Key | Action |
 |-----|--------|
-| **,** | Step backward one move |
-| **.** | Step forward one move |
+| **A** | Step backward one move |
+| **D** | Step forward one move |
+| **;** **,** **.** **/** | Move the board cursor |
 | **Esc** | Exit review mode |
 
 Review mode is accessible during play (press **V**) or from the game-over dialog via the **Review** button.

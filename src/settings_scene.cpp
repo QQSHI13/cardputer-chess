@@ -1,8 +1,8 @@
 #include "settings_scene.h"
 #include "chess_storage.h"
 #include "puzzle_storage.h"
-#include "esp_now_transport.h"
 #include <Arduino.h>
+#include <esp_mac.h>
 #include <cstdio>
 #include <cstring>
 
@@ -364,7 +364,11 @@ void SettingsScene::applyOption(uint8_t rowIdx, uint16_t value) {
 
 void SettingsScene::confirmAction(const char* title, std::function<void()> action) {
     m_modal.clearButtons();
-    m_modal.setEscapeCallback([]() {});
+    // Esc cancels the modal — same as pressing "No".
+    m_modal.setEscapeCallback([this]() {
+        m_modal.hide();
+        focusChain().focusWidget(&m_list);
+    });
     m_modal.setTitle(title);
     m_modal.setMessage("");
     m_modal.addButton("Yes", [this, action]() {
@@ -382,7 +386,10 @@ void SettingsScene::confirmAction(const char* title, std::function<void()> actio
 }
 
 void SettingsScene::showAbout() {
-    const uint8_t* mac = EspNowTransport::instance().ownMac();
+    // Read the MAC straight from the eFuse: EspNowTransport::ownMac() is
+    // all zeros until ESP-NOW is initialized, so it can't be used here.
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
     char msg[80];
     snprintf(msg, sizeof(msg),
              "MAC %02X:%02X:%02X:%02X:%02X:%02X  Heap:%u",

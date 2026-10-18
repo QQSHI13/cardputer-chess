@@ -154,7 +154,9 @@ struct MoveRecord {
 
 // Fixed-size move list for move generation
 struct MoveList {
-    static constexpr uint8_t MAX_MOVES = 128;
+    // 218 is the maximum number of legal moves in any legal chess position
+    // (the classic "9 queens" construction), so the list never truncates.
+    static constexpr uint8_t MAX_MOVES = 218;
 
     Move    moves[MAX_MOVES];
     uint8_t count = 0;

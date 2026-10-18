@@ -19,8 +19,11 @@ ChessSettings g;
 // ── Defaults ────────────────────────────────────────────────────────
 
 static void defaults(ChessSettings& s) {
+    // Zero the whole struct so padding bytes are deterministic — the CRC
+    // covers every byte up to the crc field, including padding.
+    memset(&s, 0, sizeof(s));
     s.version          = SETTINGS_VERSION;
-    s.brightness       = 4;   // index -> 128
+    s.brightness       = 4;   // index 4 -> 96
     s.theme            = 0;   // Dark
     s.pieceStyle       = 0;   // sprites
     s.boardStyle       = 0;   // themed
@@ -62,6 +65,7 @@ void load() {
 
     if (len == sizeof(ChessSettings)) {
         ChessSettings tmp;
+        memset(&tmp, 0, sizeof(tmp));   // deterministic padding for the CRC
         prefs.getBytes(NVS_KEY, &tmp, sizeof(tmp));
         prefs.end();
 

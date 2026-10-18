@@ -75,6 +75,9 @@ public:
     void drawWidgets(Canvas& framebuffer, const Theme& theme);
     bool routeInput(const InputEvent& event);
 
+    /** Force every widget to redraw on the next frame (e.g. after a theme change). */
+    void markWidgetsDirty();
+
 protected:
     const char* m_name;
     Widget*     m_widgets[MAX_WIDGETS_PER_SCENE] = {};

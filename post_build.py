@@ -36,7 +36,7 @@ def merge_bin(source, target, env):
         "--chip", "esp32s3",
         "merge_bin",
         "--flash_mode", "dio",
-        "--flash_size", "16MB",
+        "--flash_size", "8MB",   # Cardputer-ADV Stamp-S3A = ESP32-S3FN8, 8 MB flash
         "-o", out_path,
         "0x0000", bootloader,
         "0x8000", partitions,

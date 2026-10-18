@@ -83,6 +83,16 @@ private:
     uint8_t m_hostCount = 0;
     bool    m_hostListDirty = false;
     bool    m_connecting = false;  // True after selecting a host, waiting for GameStart
+    uint8_t m_acceptAttempts = 0;  // AcceptGame sends so far for the current host
+    uint32_t m_acceptLastSend = 0;
+
+    // ── Host handshake (host side) ───────────────────────────────
+    // GameStart is re-sent a few times before entering the game: the
+    // joiner cannot ack it, and if it is lost the pairing would stall.
+    bool m_startPending = false;
+    uint8_t m_startResends = 0;
+    uint32_t m_startResendAt = 0;
+    GameStartMsg m_startMsg;
 
     // ── Widgets ──────────────────────────────────────────────────
     StatusBar m_statusBar;

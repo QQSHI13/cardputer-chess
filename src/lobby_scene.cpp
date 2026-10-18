@@ -11,6 +11,10 @@
 
 // ── Name helpers for host list labels ────────────────────────────────
 
+// How many AcceptGame messages a joiner sends before giving up on a host
+// (one per 800 ms while waiting for GameStart).
+static constexpr uint8_t MAX_ACCEPT_ATTEMPTS = 8;
+
 static const char* variantShortName(ChessVariant v) {
     switch (v) {
         case ChessVariant::Chess960: return "960";
@@ -325,6 +329,8 @@ void LobbyScene::startHosting() {
     m_gameId = (uint16_t)(esp_random() & 0xFFFF);
     m_lastBroadcast = 0;
     m_stateStartTime = millis();
+    m_startPending = false;   // fresh session — no handshake in flight
+    m_startResends = 0;
 
     char hostLabel[16];
     char macStr[6];
@@ -350,6 +356,7 @@ void LobbyScene::startJoining() {
     m_hostCount = 0;
     m_hostListDirty = false;
     m_connecting = false;
+    m_acceptAttempts = 0;
     m_stateStartTime = millis();
     m_statusBar.setLeft("Join");
     m_statusBar.setRight("ESC=Back");
@@ -375,6 +382,8 @@ void LobbyScene::connectToHost(uint8_t hostIdx) {
 
     m_menuModal.hide();
     m_connecting = true;
+    m_acceptAttempts = 1;
+    m_acceptLastSend = millis();
     m_statusLabel.setText("Connecting...");
 }
 
@@ -461,18 +470,46 @@ void LobbyScene::onTick(uint32_t /*dt_ms*/) {
                 static_cast<NetMsgType>(buf[0]) == NetMsgType::AcceptGame) {
                 AcceptGameMsg accept;
                 memcpy(&accept, buf, sizeof(AcceptGameMsg));
-                if (accept.gameId == m_gameId) {
-                    transport.addPeer(mac);
-                    GameStartMsg start;
-                    start.yourColor = 1;
-                    start.variant = static_cast<uint8_t>(m_selectedVariant);
-                    start.positionIndex = m_positionIndex;
-                    start.timeControl = static_cast<uint8_t>(m_selectedTimeControl);
-                    transport.send(
-                        reinterpret_cast<const uint8_t*>(&start), sizeof(start));
-                    onPaired();
-                    return;
+                if (accept.gameId == m_gameId &&
+                    accept.version == NET_PROTOCOL_VERSION) {
+                    if (!m_startPending) {
+                        transport.addPeer(mac);
+                        m_startMsg.yourColor = 1;
+                        m_startMsg.variant = static_cast<uint8_t>(m_selectedVariant);
+                        m_startMsg.positionIndex = m_positionIndex;
+                        m_startMsg.timeControl = static_cast<uint8_t>(m_selectedTimeControl);
+                        m_startPending = true;
+                        m_startResends = 2;
+                        m_startResendAt = now;
+                        transport.send(
+                            reinterpret_cast<const uint8_t*>(&m_startMsg),
+                            sizeof(m_startMsg));
+                    } else {
+                        // Duplicate AcceptGame: the joiner did not get our
+                        // GameStart yet — send it again right away.
+                        m_startResends = 2;
+                        m_startResendAt = now;
+                        transport.send(
+                            reinterpret_cast<const uint8_t*>(&m_startMsg),
+                            sizeof(m_startMsg));
+                    }
                 }
+            }
+        }
+
+        // Re-send GameStart a couple of times, then enter the game. The
+        // joiner cannot ack it, and duplicates are ignored on its side.
+        if (m_startPending && now - m_startResendAt >= 120) {
+            m_startResendAt = now;
+            if (m_startResends > 0) {
+                m_startResends--;
+                transport.send(
+                    reinterpret_cast<const uint8_t*>(&m_startMsg),
+                    sizeof(m_startMsg));
+            } else {
+                m_startPending = false;
+                onPaired();
+                return;
             }
         }
 
@@ -519,18 +556,41 @@ void LobbyScene::onTick(uint32_t /*dt_ms*/) {
                         m_hostListDirty = true;
                     }
                 }
-            } else if (len >= sizeof(GameStartMsg) &&
+            } else if (m_connecting && len >= sizeof(GameStartMsg) &&
                        static_cast<NetMsgType>(buf[0]) == NetMsgType::GameStart) {
-                GameStartMsg start;
-                memcpy(&start, buf, sizeof(GameStartMsg));
+                // Only the host we selected may start the game.
+                if (memcmp(mac, m_peerMac, 6) == 0) {
+                    GameStartMsg start;
+                    memcpy(&start, buf, sizeof(GameStartMsg));
 
-                m_localColor = (start.yourColor == 0)
-                              ? PieceColor::White : PieceColor::Black;
-                m_selectedVariant = static_cast<ChessVariant>(start.variant);
-                m_positionIndex = start.positionIndex;
-                m_selectedTimeControl = static_cast<TimeControl>(start.timeControl);
-                m_menuModal.hide();
-                onPaired();
+                    m_localColor = (start.yourColor == 0)
+                                  ? PieceColor::White : PieceColor::Black;
+                    m_selectedVariant = static_cast<ChessVariant>(start.variant);
+                    m_positionIndex = start.positionIndex;
+                    m_selectedTimeControl = static_cast<TimeControl>(start.timeControl);
+                    m_connecting = false;
+                    m_menuModal.hide();
+                    onPaired();
+                    return;
+                }
+            }
+        }
+
+        // Retry the handshake while waiting for GameStart: the AcceptGame
+        // can be lost (e.g. sent before the host had us as a peer). Re-send
+        // every 800 ms, then give up with a clear message.
+        if (m_connecting && now - m_acceptLastSend >= 800) {
+            if (m_acceptAttempts < MAX_ACCEPT_ATTEMPTS) {
+                AcceptGameMsg accept;
+                accept.gameId = m_gameId;
+                transport.send(
+                    reinterpret_cast<const uint8_t*>(&accept), sizeof(accept));
+                m_acceptAttempts++;
+                m_acceptLastSend = now;
+            } else {
+                m_connecting = false;
+                m_statusLabel.setText("No response.");
+                cancelPairing();
                 return;
             }
         }
