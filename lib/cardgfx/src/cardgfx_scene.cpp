@@ -277,12 +277,12 @@ void SceneManager::processFrame(uint32_t dt_ms, InputManager& input,
         updateTransition(dt_ms, fb);
     }
 
-    // 5. Push framebuffer to screen.
-    // Dirty-only: all drawing goes through Canvas ops (widget blits, overlays)
-    // which mark the framebuffer dirty, and the transition effect marks all
-    // dirty while it writes the raw buffer — so partial pushes are complete.
-    // Frames where nothing changed cost no SPI traffic at all.
-    fb.pushToScreen(0, 0, true);
+    // 5. Push framebuffer to screen (full push, no allocation).
+    // NOTE: do not switch this to the dirty-only path (third arg true)
+    // without handling allocation failure: that path mallocs a temporary
+    // buffer and silently drops the frame (clearing the dirty state) when
+    // the allocation fails, which leaves stale content on screen.
+    fb.pushToScreen(0, 0, false);
 }
 
 void SceneManager::startTransition(Transition t) {

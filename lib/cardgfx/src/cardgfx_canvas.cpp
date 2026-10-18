@@ -527,16 +527,20 @@ void Canvas::pushToScreen(int16_t screenX, int16_t screenY, bool dirtyOnly) {
         // (HAL::pushRegion expects contiguous row-major data)
         uint32_t regionSize = (uint32_t)dr.w * dr.h;
         uint16_t* tmpBuf = (uint16_t*)malloc(regionSize * 2);
-        if (tmpBuf) {
-            for (uint16_t r = 0; r < dr.h; r++) {
-                memcpy(tmpBuf + (uint32_t)r * dr.w,
-                       m_buffer + (uint32_t)(dr.y + r) * m_width + dr.x,
-                       dr.w * 2);
-            }
-            HAL::pushRegion(screenX + dr.x, screenY + dr.y,
-                            dr.w, dr.h, tmpBuf);
-            free(tmpBuf);
+        if (!tmpBuf) {
+            // Allocation failed: keep the dirty state so the next frame
+            // retries, instead of clearing it and silently showing stale
+            // pixels until something else marks the canvas dirty again.
+            return;
         }
+        for (uint16_t r = 0; r < dr.h; r++) {
+            memcpy(tmpBuf + (uint32_t)r * dr.w,
+                   m_buffer + (uint32_t)(dr.y + r) * m_width + dr.x,
+                   dr.w * 2);
+        }
+        HAL::pushRegion(screenX + dr.x, screenY + dr.y,
+                        dr.w, dr.h, tmpBuf);
+        free(tmpBuf);
     } else if (!dirtyOnly) {
         // Push the entire canvas
         HAL::pushRegion(screenX, screenY, m_width, m_height, m_buffer);

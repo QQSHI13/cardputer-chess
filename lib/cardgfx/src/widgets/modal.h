@@ -85,6 +85,12 @@ public:
         markDirty();
     }
 
+    /** Currently highlighted button index. */
+    uint8_t selectedButton() const { return m_selectedButton; }
+
+    /** Number of buttons currently registered. */
+    uint8_t buttonCount() const { return m_buttonCount; }
+
     /** Hide the modal. */
     void hide() {
         m_visible = false;

@@ -388,6 +388,16 @@ void LobbyScene::connectToHost(uint8_t hostIdx) {
 }
 
 void LobbyScene::rebuildHostList() {
+    // This runs while the player may already be navigating the list (hosts
+    // appear and age out continuously). Preserve the highlighted entry so
+    // the cursor does not jump back to the first host on every rebuild.
+    bool wasVisible = m_menuModal.isVisible();
+    uint8_t keepSelected = wasVisible ? m_menuModal.selectedButton() : 0;
+    // If the highlight was on "Back" (always the last entry), keep it there
+    // even when the number of host entries changes.
+    bool keepOnBack = wasVisible && m_menuModal.buttonCount() > 0 &&
+                      keepSelected == m_menuModal.buttonCount() - 1;
+
     m_menuModal.clearButtons();
     m_menuModal.setTitle("Join Game");
     m_menuModal.setEscapeCallback([this]() {
@@ -423,7 +433,13 @@ void LobbyScene::rebuildHostList() {
         cancelPairing();
     });
 
-    m_menuModal.show();
+    if (!m_menuModal.isVisible()) {
+        m_menuModal.show();
+    }
+    // Restore the previous highlight (clamped if that entry disappeared);
+    // "Back" stays "Back" across rebuilds.
+    m_menuModal.setSelectedButton(
+        keepOnBack ? m_menuModal.buttonCount() - 1 : keepSelected);
     focusChain().focusWidget(&m_menuModal);
     m_hostListDirty = false;
 }

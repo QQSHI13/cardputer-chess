@@ -278,9 +278,16 @@ void ChessScene::onTick(uint32_t dt_ms) {
                                     this, 1,
                                     reinterpret_cast<TaskHandle_t*>(&m_aiTaskHandle), 0);
             if (created != pdPASS) {
-                // Out of memory — don't hang on "Thinking..." forever.
+                // Task creation failed (out of memory). Don't leave the game
+                // hanging on "Thinking..." — play a legal fallback move so
+                // the game can continue.
                 m_aiTaskHandle = nullptr;
                 m_aiThinking = false;
+                MoveList legal;
+                ChessRules::generateLegal(m_board, legal);
+                if (legal.count > 0) {
+                    executeMove(legal.moves[0]);
+                }
             }
         } else {
             if (m_aiSemaphore && xSemaphoreTake(m_aiSemaphore, 0) == pdTRUE) {
